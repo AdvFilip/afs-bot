@@ -1,10 +1,22 @@
-// Get due reminders
+// Get due reminders (safe version)
 router.get('/due', (req, res) => {
-  const now = new Date();
+  try {
+    const now = new Date();
 
-  const dueReminders = reminders.filter(r => {
-    return r.status === 'pending' && new Date(r.date) <= now;
-  });
+    const dueReminders = reminders.filter(r => {
+      if (!r.date) return false;
 
-  res.json(dueReminders);
+      const reminderDate = new Date(r.date);
+
+      if (isNaN(reminderDate)) return false;
+
+      return r.status === 'pending' && reminderDate <= now;
+    });
+
+    res.json(dueReminders);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error processing due reminders" });
+  }
 });
