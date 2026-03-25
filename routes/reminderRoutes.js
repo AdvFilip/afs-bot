@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
+// Shared data store
 let reminders = [];
 
 // Add reminder
@@ -34,12 +35,11 @@ router.get('/', (req, res) => {
   try {
     res.json(reminders);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: 'Error fetching reminders' });
   }
 });
 
-// Mark reminder as completed
+// Mark completed
 router.put('/complete/:id', (req, res) => {
   try {
     const { id } = req.params;
@@ -55,12 +55,11 @@ router.put('/complete/:id', (req, res) => {
     res.json({ message: 'Reminder marked as completed', reminder });
 
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: 'Error updating reminder' });
   }
 });
 
-// Get due reminders (robust)
+// Get due reminders
 router.get('/due', (req, res) => {
   try {
     const now = new Date();
@@ -78,9 +77,8 @@ router.get('/due', (req, res) => {
     res.json(dueReminders);
 
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: 'Error processing due reminders' });
   }
 });
 
-module.exports = router;
+module.exports = { router, reminders };
