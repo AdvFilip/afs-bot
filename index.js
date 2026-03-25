@@ -5,12 +5,25 @@ const reminderRoutes = require('./routes/reminderRoutes');
 app.use(express.json());
 app.use('/reminders', reminderRoutes);
 
-// Simple scheduler (runs every 30 seconds)
+// Access shared reminders array
+const { reminders } = require('./routes/reminderRoutes');
+
+// Scheduler (runs every 30 seconds)
 setInterval(() => {
   console.log('⏳ Checking due reminders...');
 
-  // NOTE: This is placeholder for now
-  // Later we will connect actual logic here
+  const now = new Date();
+
+  const due = reminders.filter(r => {
+    const reminderDate = new Date(r.date);
+    return r.status === 'pending' && reminderDate <= now;
+  });
+
+  if (due.length > 0) {
+    console.log('🚨 Due reminders:', due);
+  } else {
+    console.log('✅ No due reminders');
+  }
 
 }, 30000);
 
