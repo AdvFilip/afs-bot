@@ -1,27 +1,14 @@
-const express = require('express');
-const router = express.Router();
+// Mark reminder as completed
+router.put('/complete/:id', (req, res) => {
+  const { id } = req.params;
 
-let reminders = [];
+  const reminder = reminders.find(r => r.id == id);
 
-// Add reminder
-router.post('/add', (req, res) => {
-  const { title, date } = req.body;
+  if (!reminder) {
+    return res.status(404).json({ message: 'Reminder not found' });
+  }
 
-  const reminder = {
-    id: Date.now(),
-    title,
-    date,
-    status: 'pending'
-  };
+  reminder.status = 'completed';
 
-  reminders.push(reminder);
-
-  res.json({ message: 'Reminder added', reminder });
+  res.json({ message: 'Reminder marked as completed', reminder });
 });
-
-// Get all reminders
-router.get('/', (req, res) => {
-  res.json(reminders);
-});
-
-module.exports = router;
