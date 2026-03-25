@@ -12,16 +12,19 @@ setInterval(() => {
 
   const now = new Date();
 
-  const due = reminders.filter(r => {
+  reminders.forEach(r => {
     const reminderDate = new Date(r.date);
-    return r.status === 'pending' && reminderDate <= now;
-  });
 
-  if (due.length > 0) {
-    console.log('🚨 Due reminders:', due);
-  } else {
-    console.log('✅ No due reminders');
-  }
+    if (
+      r.status === 'pending' &&
+      reminderDate <= now
+    ) {
+      console.log('🚨 Triggering reminder:', r);
+
+      // Mark as notified
+      r.status = 'notified';
+    }
+  });
 
 }, 30000);
 
