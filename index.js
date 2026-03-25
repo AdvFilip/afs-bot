@@ -19,7 +19,9 @@ setInterval(() => {
       r.status === 'pending' &&
       reminderDate <= now
     ) {
-      console.log('🚨 Triggering reminder:', r);
+      const message = `Reminder: ${r.title} scheduled at ${r.date}`;
+
+      console.log('🚨 ACTION:', message);
 
       // Mark as notified
       r.status = 'notified';
