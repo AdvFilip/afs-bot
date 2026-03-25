@@ -1,14 +1,12 @@
 const express = require('express');
 const app = express();
-const reminderRoutes = require('./routes/reminderRoutes');
+
+const { router, reminders } = require('./routes/reminderRoutes');
 
 app.use(express.json());
-app.use('/reminders', reminderRoutes);
+app.use('/reminders', router);
 
-// Access shared reminders array
-const { reminders } = require('./routes/reminderRoutes');
-
-// Scheduler (runs every 30 seconds)
+// Scheduler (every 30 seconds)
 setInterval(() => {
   console.log('⏳ Checking due reminders...');
 
