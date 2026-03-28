@@ -1,5 +1,13 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
+const pino = require("pino");
+const qrcode = require("qrcode-terminal");
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  useMultiFileAuthState
+} = require("@whiskeysockets/baileys");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -10,8 +18,6 @@ app.use(express.json());
 const DRY_RUN = String(process.env.DRY_RUN || "true").toLowerCase() === "true";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// Failover order (as requested: Baileys primary, Meta fallback)
 const PRIMARY_PROVIDER = (process.env.PRIMARY_PROVIDER || "baileys").toLowerCase();
 const SECONDARY_PROVIDER = (process.env.SECONDARY_PROVIDER || "meta").toLowerCase();
 
@@ -20,12 +26,22 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
+  auth: { persistSession: false }
 });
+
+// ===== WA Globals =====
+let waSock = null;
+let waReady = false;
 
 // ===== Helpers =====
 function isValidE164(phone) {
   return /^\+[1-9]\d{7,14}$/.test(phone);
+}
+
+function normalizeToWaJid(phone) {
+  // +919999999999 -> 919999999999@s.whatsapp.net
+  const clean = phone.replace(/[^\d]/g, "");
+  return `${clean}@s.whatsapp.net`;
 }
 
 function formatMessage(reminder) {
@@ -33,7 +49,6 @@ function formatMessage(reminder) {
 }
 
 function nextRetryAtISO(attemptCount) {
-  // attempt 1->1m, 2->5m, 3->15m, 4->1h, 5->6h
   const backoffMinutes = [1, 5, 15, 60, 360];
   const idx = Math.min(Math.max(attemptCount - 1, 0), backoffMinutes.length - 1);
   const minutes = backoffMinutes[idx];
@@ -45,28 +60,97 @@ async function addEvent(reminderId, eventType, details = {}, provider = null) {
     reminder_id: reminderId,
     event_type: eventType,
     provider,
-    details,
+    details
   });
 }
 
-// ===== Provider stubs =====
-// Keep DRY_RUN=true until real Baileys/Meta sending is connected.
-async function sendViaProvider(provider, reminder, message) {
+// ===== Baileys Init =====
+async function initBaileys() {
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState("./wa_auth");
+    const { version } = await fetchLatestBaileysVersion();
+
+    waSock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      logger: pino({ level: "silent" })
+    });
+
+    waSock.ev.on("creds.update", saveCreds);
+
+    waSock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log("[WA] Scan this QR in WhatsApp (Linked Devices):");
+        qrcode.generate(qr, { small: true });
+      }
+
+      if (connection === "open") {
+        waReady = true;
+        console.log("[WA] Connected successfully");
+      }
+
+      if (connection === "close") {
+        waReady = false;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        console.log(`[WA] Connection closed. Reconnect=${shouldReconnect}`);
+
+        if (shouldReconnect) {
+          setTimeout(() => initBaileys(), 4000);
+        } else {
+          console.log("[WA] Logged out. Delete wa_auth and re-link.");
+        }
+      }
+    });
+  } catch (err) {
+    waReady = false;
+    console.error("[WA] Init error:", err.message);
+    setTimeout(() => initBaileys(), 5000);
+  }
+}
+
+// ===== Provider Senders =====
+async function sendViaBaileys(reminder, message) {
   if (DRY_RUN) {
-    console.log(`[DRY RUN][${provider.toUpperCase()}] to ${reminder.user_phone_e164}: ${message}`);
-    return { ok: true, providerMessageId: `dry-${provider}-${Date.now()}` };
+    console.log(`[DRY RUN][BAILEYS] to ${reminder.user_phone_e164}: ${message}`);
+    return { ok: true, providerMessageId: `dry-baileys-${Date.now()}` };
   }
 
-  // TODO: plug real provider calls here
-  // if (provider === "baileys") { ... }
-  // if (provider === "meta") { ... }
+  if (!waSock || !waReady) {
+    return { ok: false, error: "Baileys not connected/ready" };
+  }
 
-  return { ok: false, error: `${provider} provider not configured` };
+  try {
+    const jid = normalizeToWaJid(reminder.user_phone_e164);
+    const sent = await waSock.sendMessage(jid, { text: message });
+    return { ok: true, providerMessageId: sent?.key?.id || null };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+async function sendViaMeta(_reminder, _message) {
+  if (DRY_RUN) {
+    console.log(`[DRY RUN][META] fallback path used`);
+    return { ok: true, providerMessageId: `dry-meta-${Date.now()}` };
+  }
+  return { ok: false, error: "Meta provider not configured yet" };
+}
+
+async function sendViaProvider(provider, reminder, message) {
+  if (provider === "baileys") return sendViaBaileys(reminder, message);
+  if (provider === "meta") return sendViaMeta(reminder, message);
+  return { ok: false, error: `Unknown provider: ${provider}` };
 }
 
 async function sendWithFailover(reminder, message) {
   const first = await sendViaProvider(PRIMARY_PROVIDER, reminder, message);
   if (first.ok) return { ok: true, provider: PRIMARY_PROVIDER, providerMessageId: first.providerMessageId };
+
+  console.log(`[FAILOVER] Primary failed (${PRIMARY_PROVIDER}): ${first.error}`);
 
   const second = await sendViaProvider(SECONDARY_PROVIDER, reminder, message);
   if (second.ok) return { ok: true, provider: SECONDARY_PROVIDER, providerMessageId: second.providerMessageId };
@@ -79,7 +163,7 @@ async function sendWithFailover(reminder, message) {
 
 // ===== Health =====
 app.get("/", (_req, res) => {
-  res.send("AFS Reminder System Running (Supabase)");
+  res.send("AFS Reminder System Running (Supabase + Baileys)");
 });
 
 // ===== Add Reminder =====
@@ -113,17 +197,12 @@ app.post("/reminders/add", async (req, res) => {
       provider: PRIMARY_PROVIDER
     };
 
-    const { data, error } = await supabase
-      .from("reminders")
-      .insert(payload)
-      .select()
-      .single();
-
+    const { data, error } = await supabase.from("reminders").insert(payload).select().single();
     if (error) throw error;
 
     await addEvent(data.id, "created", { source: "api" });
-
     console.log(`[ADD] Reminder ${data.id} created for ${data.user_phone_e164}`);
+
     return res.json({ message: "Reminder added", reminder: data });
   } catch (err) {
     console.error("ADD ERROR:", err.message);
@@ -131,7 +210,7 @@ app.post("/reminders/add", async (req, res) => {
   }
 });
 
-// ===== List reminders =====
+// ===== List Reminders =====
 app.get("/reminders", async (_req, res) => {
   try {
     const { data, error } = await supabase
@@ -139,7 +218,6 @@ app.get("/reminders", async (_req, res) => {
       .select("*")
       .order("created_at", { ascending: false })
       .limit(100);
-
     if (error) throw error;
     return res.json(data);
   } catch (err) {
@@ -152,7 +230,7 @@ app.get("/reminders", async (_req, res) => {
 async function processOneReminder(reminder) {
   console.log(`[TRIGGER] Reminder ${reminder.id} is due`);
 
-  const message = formatMessage(reminder);
+  const message = reminder.message || formatMessage(reminder);
   const result = await sendWithFailover(reminder, message);
 
   if (result.ok) {
@@ -165,7 +243,6 @@ async function processOneReminder(reminder) {
       })
       .eq("id", reminder.id)
       .eq("status", "processing");
-
     if (error) throw error;
 
     await addEvent(reminder.id, "sent", { providerMessageId: result.providerMessageId }, result.provider);
@@ -187,7 +264,6 @@ async function processOneReminder(reminder) {
       })
       .eq("id", reminder.id)
       .eq("status", "processing");
-
     if (error) throw error;
 
     await addEvent(reminder.id, "failed", { error: result.error });
@@ -208,7 +284,6 @@ async function processOneReminder(reminder) {
     })
     .eq("id", reminder.id)
     .eq("status", "processing");
-
   if (error) throw error;
 
   await addEvent(reminder.id, "retried", { next_retry_at: retryAt, error: result.error });
@@ -219,7 +294,6 @@ async function claimAndProcessDue() {
   const now = new Date().toISOString();
   console.log(`[CHECK] Running reminder scan at ${now}`);
 
-  // pending due
   const { data: pendingDue, error: pendingErr } = await supabase
     .from("reminders")
     .select("*")
@@ -227,10 +301,8 @@ async function claimAndProcessDue() {
     .lte("scheduled_at_utc", now)
     .order("scheduled_at_utc", { ascending: true })
     .limit(20);
-
   if (pendingErr) throw pendingErr;
 
-  // retrying due
   const { data: retryDue, error: retryErr } = await supabase
     .from("reminders")
     .select("*")
@@ -238,13 +310,11 @@ async function claimAndProcessDue() {
     .lte("next_retry_at", now)
     .order("next_retry_at", { ascending: true })
     .limit(20);
-
   if (retryErr) throw retryErr;
 
   const due = [...(pendingDue || []), ...(retryDue || [])];
 
   for (const row of due) {
-    // claim lock: only process if still pending/retrying
     const expectedStatus = row.status;
     const { data: claimed, error: claimErr } = await supabase
       .from("reminders")
@@ -271,8 +341,11 @@ setInterval(() => {
 }, 10000);
 
 // ===== Start =====
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
-  console.log("Supabase mode active");
   console.log(`DRY_RUN=${DRY_RUN}, PRIMARY_PROVIDER=${PRIMARY_PROVIDER}, SECONDARY_PROVIDER=${SECONDARY_PROVIDER}`);
+  console.log("Supabase mode active");
+
+  // Initialize Baileys in background
+  await initBaileys();
 });
