@@ -1,11 +1,13 @@
 {
   "name": "afs-bot",
-  "version": "1.0.0",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "AFS Reminder System (Supabase + Scheduler)",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
     "express": "^4.18.2"
   }
 }
