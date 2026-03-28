@@ -26,8 +26,9 @@ const SECONDARY_PROVIDER = (process.env.SECONDARY_PROVIDER || "meta").toLowerCas
 const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 
-// IMPORTANT: set WA_AUTH_PATH=/data/wa_auth in Railway
-const WA_AUTH_PATH = process.env.WA_AUTH_PATH || "/data/wa_auth";
+// local runtime path inside container (ephemeral, but synced to DB)
+const WA_AUTH_PATH = process.env.WA_AUTH_PATH || "./wa_auth_runtime";
+const WA_AUTH_ROW_ID = "default";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -73,10 +74,105 @@ async function addEvent(reminderId, eventType, details = {}, provider = null, at
   });
 }
 
+// ===== Auth FS snapshot helpers =====
+function ensureDir(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function removeDirIfExists(dir) {
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function walkFiles(dir) {
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...walkFiles(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+function snapshotFolderToJson(dir) {
+  const files = walkFiles(dir);
+  const json = {};
+  for (const f of files) {
+    const rel = path.relative(dir, f).replace(/\\/g, "/");
+    const buf = fs.readFileSync(f);
+    json[rel] = buf.toString("base64");
+  }
+  return json;
+}
+
+function restoreFolderFromJson(dir, stateJson) {
+  ensureDir(dir);
+  for (const rel of Object.keys(stateJson || {})) {
+    const full = path.join(dir, rel);
+    ensureDir(path.dirname(full));
+    fs.writeFileSync(full, Buffer.from(stateJson[rel], "base64"));
+  }
+}
+
+// ===== Auth DB sync =====
+async function loadAuthStateFromDb() {
+  const { data, error } = await supabase
+    .from("wa_auth_state")
+    .select("state_json")
+    .eq("id", WA_AUTH_ROW_ID)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[WA-AUTH] load error:", error.message);
+    return null;
+  }
+  return data?.state_json || null;
+}
+
+async function saveAuthStateToDb() {
+  try {
+    const stateJson = snapshotFolderToJson(WA_AUTH_PATH);
+
+    const { error } = await supabase
+      .from("wa_auth_state")
+      .upsert({
+        id: WA_AUTH_ROW_ID,
+        state_json: stateJson,
+        updated_at: nowIso()
+      });
+
+    if (error) {
+      console.error("[WA-AUTH] save error:", error.message);
+    } else {
+      console.log("[WA-AUTH] state synced to Supabase");
+    }
+  } catch (err) {
+    console.error("[WA-AUTH] snapshot failure:", err.message);
+  }
+}
+
+async function restoreAuthStateFromDb() {
+  try {
+    const stateJson = await loadAuthStateFromDb();
+    removeDirIfExists(WA_AUTH_PATH);
+    ensureDir(WA_AUTH_PATH);
+
+    if (stateJson && Object.keys(stateJson).length > 0) {
+      restoreFolderFromJson(WA_AUTH_PATH, stateJson);
+      console.log("[WA-AUTH] restored from Supabase");
+    } else {
+      console.log("[WA-AUTH] no prior state in Supabase (fresh link needed)");
+    }
+  } catch (err) {
+    console.error("[WA-AUTH] restore failure:", err.message);
+  }
+}
+
 // ===== Baileys Init =====
 async function initBaileys() {
   try {
-    fs.mkdirSync(path.resolve(WA_AUTH_PATH), { recursive: true });
+    await restoreAuthStateFromDb();
 
     const { state, saveCreds } = await useMultiFileAuthState(WA_AUTH_PATH);
     const { version } = await fetchLatestBaileysVersion();
@@ -88,7 +184,10 @@ async function initBaileys() {
       logger: pino({ level: "silent" })
     });
 
-    waSock.ev.on("creds.update", saveCreds);
+    waSock.ev.on("creds.update", async () => {
+      await saveCreds();
+      await saveAuthStateToDb();
+    });
 
     waSock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -111,6 +210,9 @@ async function initBaileys() {
         latestQrDataUrl = null;
         lastWaError = null;
         console.log("[WA] Connected successfully");
+
+        // Save one more snapshot after open
+        await saveAuthStateToDb();
       }
 
       if (connection === "close") {
@@ -185,7 +287,7 @@ async function sendWithFailover(reminder, message) {
 
 // ===== API =====
 app.get("/", (_req, res) => {
-  res.send("AFS Reminder System Running (Persistent WA Auth)");
+  res.send("AFS Reminder System Running (DB-persisted WA auth)");
 });
 
 app.get("/wa/status", (_req, res) => {
@@ -197,7 +299,8 @@ app.get("/wa/status", (_req, res) => {
     secondary: SECONDARY_PROVIDER,
     connectedAt: waConnectedAt,
     lastError: lastWaError,
-    authPath: WA_AUTH_PATH
+    authPath: WA_AUTH_PATH,
+    authPersistence: "supabase:wa_auth_state"
   });
 });
 
