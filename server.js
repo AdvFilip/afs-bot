@@ -1,7 +1,8 @@
 const express = require("express");
 const { createClient } = require("@supabase/supabase-js");
 const pino = require("pino");
-const qrcode = require("qrcode-terminal");
+const qrcodeTerminal = require("qrcode-terminal");
+const QRCode = require("qrcode");
 const {
   default: makeWASocket,
   DisconnectReason,
@@ -32,6 +33,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 // ===== WA Globals =====
 let waSock = null;
 let waReady = false;
+let latestQrText = null;      // raw QR text from Baileys
+let latestQrDataUrl = null;   // PNG data URL for browser display
 
 // ===== Helpers =====
 function isValidE164(phone) {
@@ -39,7 +42,6 @@ function isValidE164(phone) {
 }
 
 function normalizeToWaJid(phone) {
-  // +919999999999 -> 919999999999@s.whatsapp.net
   const clean = phone.replace(/[^\d]/g, "");
   return `${clean}@s.whatsapp.net`;
 }
@@ -79,16 +81,25 @@ async function initBaileys() {
 
     waSock.ev.on("creds.update", saveCreds);
 
-    waSock.ev.on("connection.update", (update) => {
+    waSock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        latestQrText = qr;
+        try {
+          latestQrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 360 });
+        } catch {
+          latestQrDataUrl = null;
+        }
+
         console.log("[WA] Scan this QR in WhatsApp (Linked Devices):");
-        qrcode.generate(qr, { small: true });
+        qrcodeTerminal.generate(qr, { small: true });
       }
 
       if (connection === "open") {
         waReady = true;
+        latestQrText = null;
+        latestQrDataUrl = null;
         console.log("[WA] Connected successfully");
       }
 
@@ -164,6 +175,46 @@ async function sendWithFailover(reminder, message) {
 // ===== Health =====
 app.get("/", (_req, res) => {
   res.send("AFS Reminder System Running (Supabase + Baileys)");
+});
+
+// ===== NEW: WA status endpoint =====
+app.get("/wa/status", (_req, res) => {
+  res.json({
+    connected: waReady,
+    hasQr: Boolean(latestQrText),
+    dryRun: DRY_RUN,
+    primary: PRIMARY_PROVIDER,
+    secondary: SECONDARY_PROVIDER
+  });
+});
+
+// ===== NEW: WA QR endpoint (scannable image) =====
+app.get("/wa/qr", (_req, res) => {
+  if (waReady) {
+    return res.send(`
+      <html><body style="font-family:Arial;padding:20px">
+      <h2>WhatsApp is already connected ✅</h2>
+      </body></html>
+    `);
+  }
+
+  if (!latestQrDataUrl) {
+    return res.send(`
+      <html><body style="font-family:Arial;padding:20px">
+      <h2>QR not ready yet ⏳</h2>
+      <p>Refresh in a few seconds.</p>
+      </body></html>
+    `);
+  }
+
+  return res.send(`
+    <html>
+      <body style="font-family:Arial;padding:20px">
+        <h2>Scan in WhatsApp → Linked Devices</h2>
+        <img src="${latestQrDataUrl}" alt="WA QR" />
+      </body>
+    </html>
+  `);
 });
 
 // ===== Add Reminder =====
@@ -345,7 +396,5 @@ app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`DRY_RUN=${DRY_RUN}, PRIMARY_PROVIDER=${PRIMARY_PROVIDER}, SECONDARY_PROVIDER=${SECONDARY_PROVIDER}`);
   console.log("Supabase mode active");
-
-  // Initialize Baileys in background
   await initBaileys();
 });
