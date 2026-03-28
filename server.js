@@ -1,4 +1,6 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 const pino = require("pino");
 const qrcodeTerminal = require("qrcode-terminal");
@@ -23,6 +25,9 @@ const PRIMARY_PROVIDER = (process.env.PRIMARY_PROVIDER || "baileys").toLowerCase
 const SECONDARY_PROVIDER = (process.env.SECONDARY_PROVIDER || "meta").toLowerCase();
 const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
+
+// IMPORTANT: set WA_AUTH_PATH=/data/wa_auth in Railway
+const WA_AUTH_PATH = process.env.WA_AUTH_PATH || "/data/wa_auth";
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
@@ -71,7 +76,9 @@ async function addEvent(reminderId, eventType, details = {}, provider = null, at
 // ===== Baileys Init =====
 async function initBaileys() {
   try {
-    const { state, saveCreds } = await useMultiFileAuthState("./wa_auth");
+    fs.mkdirSync(path.resolve(WA_AUTH_PATH), { recursive: true });
+
+    const { state, saveCreds } = await useMultiFileAuthState(WA_AUTH_PATH);
     const { version } = await fetchLatestBaileysVersion();
 
     waSock = makeWASocket({
@@ -116,7 +123,7 @@ async function initBaileys() {
         if (shouldReconnect) {
           setTimeout(() => initBaileys(), 4000);
         } else {
-          console.log("[WA] Logged out. Delete wa_auth and re-link.");
+          console.log("[WA] Logged out. Re-link required.");
         }
       }
     });
@@ -178,7 +185,7 @@ async function sendWithFailover(reminder, message) {
 
 // ===== API =====
 app.get("/", (_req, res) => {
-  res.send("AFS Reminder System Running (Hardened)");
+  res.send("AFS Reminder System Running (Persistent WA Auth)");
 });
 
 app.get("/wa/status", (_req, res) => {
@@ -189,7 +196,8 @@ app.get("/wa/status", (_req, res) => {
     primary: PRIMARY_PROVIDER,
     secondary: SECONDARY_PROVIDER,
     connectedAt: waConnectedAt,
-    lastError: lastWaError
+    lastError: lastWaError,
+    authPath: WA_AUTH_PATH
   });
 });
 
@@ -367,5 +375,6 @@ app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`DRY_RUN=${DRY_RUN}, PRIMARY_PROVIDER=${PRIMARY_PROVIDER}, SECONDARY_PROVIDER=${SECONDARY_PROVIDER}`);
   console.log(`SCAN_INTERVAL_MS=${SCAN_INTERVAL_MS}, MAX_BATCH=${MAX_BATCH}`);
+  console.log(`WA_AUTH_PATH=${WA_AUTH_PATH}`);
   await initBaileys();
 });
