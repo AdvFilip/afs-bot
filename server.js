@@ -1125,8 +1125,7 @@ async function sendWelcome(jid) {
     `*How to register your case:*\n` +
     `• Send your *CNR number* directly (e.g. TNTP050007832023)\n` +
     `• Or reply *REGISTER* to find your case step by step\n\n` +
-    `*Other commands:*\n` +
-    `  STATUS · NEXT · DONE · SNOOZE · STOP`);
+    `Reply *STOP* at any time to unsubscribe.`);
 }
 
 // REGISTER → step-by-step case lookup (3 questions)
