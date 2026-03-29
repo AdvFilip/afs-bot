@@ -486,9 +486,10 @@ async function handleInboundMessage(msg) {
         await handleOnboardingStep(session, messageText || '', phoneE164, jid, contact.id);
         return;
       }
-      // 5b. Direct CNR number sent
-      if (looksLikeCnr(upperText)) {
-        await handleCnrLookup(upperText, phoneE164, jid, contact.id);
+      // 5b. CNR number — sent directly, pasted from eCourts URL, or extracted from QR scan text
+      const cnrFound = extractCnr(messageText || '');
+      if (cnrFound) {
+        await handleCnrLookup(cnrFound, phoneE164, jid, contact.id);
         return;
       }
       // 5c. Greeting → welcome message
@@ -916,9 +917,27 @@ app.get('/cases/:cino', async (req, res) => {
 
 // ===== WhatsApp Onboarding Flow =====
 
-// Detect if a message looks like a CNR number (e.g. TNTP050007832023)
-function looksLikeCnr(text) {
-  return /^[A-Z]{2,6}[0-9]{10,14}$/.test(text.trim().toUpperCase());
+// Extract a CNR from any message — handles:
+//   • Raw CNR:        "TNTP050007832023"
+//   • eCourts URL:    "https://services.ecourts.gov.in/...?cino=TNTP050007832023"
+//   • CNR in text:    "My case TNTP050007832023 next hearing…"
+const CNR_PATTERN = /\b([A-Z]{2,6}[0-9]{10,14})\b/i;
+function extractCnr(text) {
+  if (!text) return null;
+  const clean = text.trim();
+  // Try URL params first (most specific)
+  try {
+    const url = new URL(clean);
+    for (const val of url.searchParams.values()) {
+      if (CNR_PATTERN.test(val)) return val.toUpperCase();
+    }
+    // Also check the path
+    const pathMatch = clean.match(CNR_PATTERN);
+    if (pathMatch) return pathMatch[1].toUpperCase();
+  } catch { /* not a URL */ }
+  // Plain text — extract first CNR-shaped token
+  const match = clean.match(CNR_PATTERN);
+  return match ? match[1].toUpperCase() : null;
 }
 
 function formatDateIST(dateStr) {
