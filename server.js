@@ -667,12 +667,26 @@ const REMINDER_TIERS = [
 async function scheduleRemindersForContact(cino, caseRow, phone, name) {
   if (!caseRow.next_hearing_date) return;
 
+  const todayDate  = new Date().toISOString().split('T')[0];
+
+  // Never schedule reminders for a hearing that has already passed.
+  // Cancel any stale pending ones and bail out silently.
+  if (caseRow.next_hearing_date < todayDate) {
+    await supabase.from('reminders')
+      .update({ status: 'failed', last_error_message: 'Hearing date already passed' })
+      .eq('user_phone_e164', phone)
+      .eq('case_cino', cino)
+      .in('status', ['pending', 'retrying']);
+    console.log(`[REMINDERS] Skipped ${cino} for ${phone} — hearing ${caseRow.next_hearing_date} already past`);
+    return;
+  }
+
   const hearingUtc = new Date(caseRow.next_hearing_date + 'T00:00:00Z');
   const now        = new Date();
   const caseRef    = caseRow.reference || cino;
   const caseTitle  = caseRow.title     || caseRef;
   const courtLine  = caseRow.court_name   ? `Court: ${caseRow.court_name}`     : null;
-  const stageLine  = caseRow.purpose_name ? `Stage: ${caseRow.purpose_name}`   : null;
+  const stageLine  = caseRow.purpose_name ? `Purpose: ${caseRow.purpose_name}` : null;
   const dateLine   = `Hearing Date: ${formatDateIST(caseRow.next_hearing_date)}`;
 
   // Cancel all existing pending/retrying reminders for this case+contact
@@ -690,14 +704,18 @@ async function scheduleRemindersForContact(cino, caseRow, phone, name) {
 
     const isLastDay = daysBefore === 1;
     const message = [
-      `⚖️ AFS Legal – Hearing Reminder (${tag})`,
+      `⚖️ *AFS Legal — Hearing Reminder*`,
       '',
-      `Your case is listed for hearing *${label}*.`,
-      `Case: ${caseRef}`,
-      caseTitle,
-      courtLine, stageLine, dateLine,
+      `Your case is scheduled for hearing *${label}*.`,
+      '',
+      `📁 *Case:* ${caseRef}`,
+      caseTitle !== caseRef ? `${caseTitle}` : null,
+      courtLine  ? `🏛 ${courtLine}`  : null,
+      stageLine  ? `📋 ${stageLine}`  : null,
+      `📅 ${dateLine}`,
       isLastDay ? '' : null,
-      isLastDay ? 'Reply DONE once the hearing is over, or SNOOZE to delay.' : null,
+      isLastDay ? 'Please review the case file before appearance.' : null,
+      isLastDay ? 'Reply *STOP* anytime to unsubscribe.' : null,
     ].filter(l => l !== null).join('\n');
 
     const { error } = await supabase.from('reminders').insert({
@@ -1301,11 +1319,20 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
       const d   = session.session_data || {};
       const ref = caseRow?.reference
         || (d.case_type ? `${d.case_type} ${d.case_number}/${d.year}` : cino);
-      const hearingLine = caseRow?.next_hearing_date
-        ? `\n\n📅 Your next hearing is on *${formatDateIST(caseRow.next_hearing_date)}*. I'll remind you the day before.`
-        : '';
+
+      const todayDate   = new Date().toISOString().split('T')[0];
+      const hearingDate = caseRow?.next_hearing_date;
+      let hearingLine;
+      if (hearingDate && hearingDate >= todayDate) {
+        hearingLine = `\n\n📅 Next hearing: *${formatDateIST(hearingDate)}*\nYou'll receive reminders 7 days, 3 days, and 1 day before.`;
+      } else if (hearingDate) {
+        hearingLine = `\n\n⚠️ The last recorded hearing on *${formatDateIST(hearingDate)}* has passed. We'll automatically send reminders once the court sets the next date.`;
+      } else {
+        hearingLine = `\n\n📋 No hearing date recorded yet. We'll send reminders once the court schedules one.`;
+      }
+
       await sendWaText(jid,
-        `✅ *Done!* You're subscribed to hearing reminders for *${ref}*.${hearingLine}\n\n` +
+        `✅ *Done!* You're now subscribed to hearing reminders for *${ref}*.${hearingLine}\n\n` +
         `Reply *STOP* anytime to unsubscribe.`);
       await clearSession(phoneE164);
 
