@@ -438,7 +438,17 @@ async function handleInboundMessage(msg) {
       .select('id').single();
     if (convErr) throw convErr;
 
-    // 3. Persist inbound message
+    // 3. Persist inbound message (skip if already recorded)
+    if (msg.key.id) {
+      const { data: existing } = await supabase
+        .from('wa_messages_inbound')
+        .select('id')
+        .eq('provider_message_id', msg.key.id)
+        .eq('provider', 'baileys')
+        .maybeSingle();
+      if (existing) return;
+    }
+
     const { data: inbound, error: inboundErr } = await supabase
       .from('wa_messages_inbound')
       .insert({
