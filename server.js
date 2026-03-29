@@ -740,26 +740,45 @@ async function syncOneCnr(cnr) {
 async function runDailyCaseSync() {
   console.log('[SYNC] Daily case sync starting...');
 
-  const yesterday   = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  // Tiered sync strategy — minimises CASE_DETAIL API calls (1.5 credits each):
+  //   Hearing ≤ 7 days away  → sync daily          (needs fresh data urgently)
+  //   Hearing 8–30 days away → sync every 3 days
+  //   Hearing > 30 days / unknown → sync weekly
+  //   Hearing already past    → always sync (catch rescheduled dates)
+  const now        = new Date();
+  const todayStr   = now.toISOString().split('T')[0];
+  const in7d       = new Date(now.getTime() +  7 * 86400000).toISOString().split('T')[0];
+  const in30d      = new Date(now.getTime() + 30 * 86400000).toISOString().split('T')[0];
+  const ago1d      = new Date(now.getTime() -  1 * 86400000).toISOString();
+  const ago3d      = new Date(now.getTime() -  3 * 86400000).toISOString();
+  const ago7d      = new Date(now.getTime() -  7 * 86400000).toISOString();
 
-  // Cases to refresh: heard yesterday or earlier, not synced in 7 days, or never synced
-  const { data: staleCases, error } = await supabase
+  const { data: allOpen, error } = await supabase
     .from('cases')
-    .select('cino')
-    .or(`next_hearing_date.lte.${yesterday.toISOString().split('T')[0]},last_synced_at.lte.${sevenDaysAgo.toISOString()},last_synced_at.is.null`);
+    .select('cino, next_hearing_date, last_synced_at')
+    .eq('case_status', 'open');
 
   if (error) { console.error('[SYNC] Query error:', error.message); return; }
-  if (!staleCases?.length) { console.log('[SYNC] No stale cases to refresh.'); return; }
+  if (!allOpen?.length) { console.log('[SYNC] No open cases.'); return; }
 
-  console.log(`[SYNC] Refreshing ${staleCases.length} case(s)...`);
+  const toSync = allOpen.filter(({ next_hearing_date: h, last_synced_at: s }) => {
+    if (!s) return true;                          // never synced → always sync
+    if (!h || h < todayStr) return s < ago1d;     // past/unknown → daily
+    if (h <= in7d)          return s < ago1d;     // ≤7 days      → daily
+    if (h <= in30d)         return s < ago3d;     // 8–30 days    → every 3 days
+    return s < ago7d;                             // >30 days     → weekly
+  });
+
+  if (!toSync.length) { console.log('[SYNC] All cases up to date.'); return; }
+  console.log(`[SYNC] ${toSync.length}/${allOpen.length} case(s) due for refresh...`);
+
   let ok = 0, failed = 0;
-  for (const { cino } of staleCases) {
+  for (const { cino } of toSync) {
     try { await syncOneCnr(cino); ok++; }
     catch (e) { console.error(`[SYNC] Failed ${cino}:`, e.message); failed++; }
-    await new Promise(r => setTimeout(r, 300)); // 300ms between calls — avoids rate-limit
+    await new Promise(r => setTimeout(r, 300));
   }
-  console.log(`[SYNC] Daily sync complete. ok=${ok} failed=${failed}`);
+  console.log(`[SYNC] Done. ok=${ok} failed=${failed} skipped=${allOpen.length - toSync.length}`);
 }
 
 // POST /sync/cases — manual sync: { cnrs: ["CINO1", ...] } or empty body to run full delta sync
@@ -1137,23 +1156,30 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
       }
       await sendWaText(jid, '⏳ Setting up your reminders...');
 
-      // Full sync from API; fallback to stored search result if API fails
-      try {
-        await syncOneCnr(cino);
-      } catch (e) {
-        console.error('[ONBOARD] full sync failed, using candidate:', e.message);
-        const c = session.candidate_case || {};
+      // Use data already fetched during lookup — avoids a redundant paid API call.
+      // CNR path stored a full CASE_DETAIL result; REGISTER path stored a search result.
+      const c = session.candidate_case || {};
+      if (session.session_data?.cnr_path && c.cnr) {
+        // Full CASE_DETAIL data — map it directly
+        const row = mapApiCaseToRow(c);
+        await supabase.from('cases').upsert(row, { onConflict: 'cino' });
+      } else {
+        // Search result (partial) — store what we have; daily sync fills the gaps later
         const petitioners = Array.isArray(c.petitioners) ? c.petitioners : [];
         const respondents  = Array.isArray(c.respondents)  ? c.respondents  : [];
         await supabase.from('cases').upsert({
           cino,
           title:             [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || cino,
           case_type:         c.caseType          ?? null,
-          case_status:       'open',
+          case_status:       c.caseStatus === 'DISPOSED' ? 'closed' : 'open',
           next_hearing_date: c.nextHearingDate   ?? null,
           petitioners, respondents,
+          petitioner_advocates: Array.isArray(c.petitionerAdvocates) ? c.petitionerAdvocates : [],
+          respondent_advocates: Array.isArray(c.respondentAdvocates) ? c.respondentAdvocates : [],
+          judges:            Array.isArray(c.judges) ? c.judges : [],
           court_code:        c.courtCode         ?? null,
-          last_synced_at: nowIso(), updated_at: nowIso(),
+          raw_api_payload:   c,
+          last_synced_at:    nowIso(), updated_at: nowIso(),
         }, { onConflict: 'cino' });
       }
 
