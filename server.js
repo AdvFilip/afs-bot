@@ -229,6 +229,13 @@ async function initBaileys() {
         }
       }
     });
+    waSock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const msg of messages) {
+        await handleInboundMessage(msg);
+      }
+    });
+
   } catch (err) {
     waReady = false;
     lastWaError = err.message;
@@ -283,6 +290,193 @@ async function sendWithFailover(reminder, message) {
     transient: Boolean(first.transient || second.transient),
     error: `Both providers failed. primary=${first.error || "unknown"} | secondary=${second.error || "unknown"}`
   };
+}
+
+// ===== Inbound: Command Parser =====
+function parseCommand(text) {
+  if (!text) return { command: 'UNKNOWN', args: {} };
+  const upper = text.trim().toUpperCase();
+  if (upper === 'DONE')   return { command: 'DONE',   args: {} };
+  if (upper === 'STOP')   return { command: 'STOP',   args: {} };
+  if (upper === 'NEXT')   return { command: 'NEXT',   args: {} };
+  if (upper === 'STATUS') return { command: 'STATUS', args: {} };
+  const snoozeMatch = upper.match(/^SNOOZE(?:\s+(\d+))?$/);
+  if (snoozeMatch) return { command: 'SNOOZE', args: { minutes: parseInt(snoozeMatch[1] || '60', 10) } };
+  return { command: 'UNKNOWN', args: { original_text: text.slice(0, 200) } };
+}
+
+// ===== Inbound: Command Executor =====
+async function executeCommand(command, args, contactId, cmdId, phoneE164) {
+  const jid = normalizeToWaJid(phoneE164);
+  let replyText = null;
+  let executionNote = null;
+
+  try {
+    if (command === 'STOP') {
+      await supabase.from('wa_contact_prefs').upsert(
+        { client_contact_id: contactId, opt_status: 'opted_out', whatsapp_enabled: false, last_opt_change_at: nowIso(), updated_at: nowIso() },
+        { onConflict: 'client_contact_id' }
+      );
+      replyText = 'You have been unsubscribed from AFS Legal reminders. Reply START to re-subscribe.';
+      executionNote = 'opted_out';
+
+    } else if (command === 'DONE') {
+      const { data: rows } = await supabase
+        .from('reminders').select('id, title')
+        .eq('user_phone_e164', phoneE164).eq('status', 'notified')
+        .order('notified_at', { ascending: false }).limit(1);
+      if (rows?.length) {
+        await addEvent(rows[0].id, 'acknowledged', { via: 'whatsapp_reply' });
+        replyText = `Got it. "${rows[0].title}" marked as acknowledged.`;
+        executionNote = `ack reminder ${rows[0].id}`;
+      } else {
+        replyText = 'No recent reminders to acknowledge.';
+        executionNote = 'no_notified_reminder_found';
+      }
+
+    } else if (command === 'SNOOZE') {
+      const minutes = args.minutes || 60;
+      const { data: rows } = await supabase
+        .from('reminders').select('id, title')
+        .eq('user_phone_e164', phoneE164).in('status', ['pending', 'retrying'])
+        .order('scheduled_at_utc', { ascending: true }).limit(1);
+      if (rows?.length) {
+        const newTime = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+        await supabase.from('reminders').update({ status: 'pending', scheduled_at_utc: newTime, next_retry_at: null }).eq('id', rows[0].id);
+        await addEvent(rows[0].id, 'snoozed', { minutes, new_time: newTime, via: 'whatsapp_reply' });
+        replyText = `"${rows[0].title}" snoozed for ${minutes} minute${minutes !== 1 ? 's' : ''}.`;
+        executionNote = `snoozed ${rows[0].id} by ${minutes}m`;
+      } else {
+        replyText = 'No upcoming reminders to snooze.';
+        executionNote = 'no_reminder_found';
+      }
+
+    } else if (command === 'NEXT') {
+      const { data: rows } = await supabase
+        .from('reminders').select('title, scheduled_at_utc')
+        .eq('user_phone_e164', phoneE164).in('status', ['pending', 'retrying'])
+        .order('scheduled_at_utc', { ascending: true }).limit(1);
+      if (rows?.length) {
+        replyText = `⚖️ Next reminder:\n"${rows[0].title}"\nScheduled: ${rows[0].scheduled_at_utc}`;
+        executionNote = 'replied with next reminder';
+      } else {
+        replyText = 'You have no upcoming reminders.';
+        executionNote = 'no_pending_reminders';
+      }
+
+    } else if (command === 'STATUS') {
+      const { data: rows } = await supabase
+        .from('reminders').select('title, scheduled_at_utc')
+        .eq('user_phone_e164', phoneE164).in('status', ['pending', 'retrying'])
+        .order('scheduled_at_utc', { ascending: true }).limit(5);
+      if (rows?.length) {
+        const lines = rows.map((r, i) => `${i + 1}. ${r.title} — ${r.scheduled_at_utc}`);
+        replyText = `⚖️ Your upcoming reminders:\n${lines.join('\n')}`;
+        executionNote = `replied with ${rows.length} reminders`;
+      } else {
+        replyText = 'You have no upcoming reminders.';
+        executionNote = 'no_pending_reminders';
+      }
+    }
+
+    if (replyText) {
+      if (DRY_RUN) {
+        console.log(`[DRY RUN][REPLY] to ${phoneE164}: ${replyText}`);
+      } else if (waSock && waReady) {
+        await waSock.sendMessage(jid, { text: replyText });
+      }
+    }
+
+    await supabase.from('wa_commands').update({ execution_status: 'executed', execution_note: executionNote, executed_at: nowIso() }).eq('id', cmdId);
+    console.log(`[CMD] ${command} executed for ${phoneE164}: ${executionNote}`);
+
+  } catch (err) {
+    console.error(`[CMD ERROR] ${command}:`, err.message);
+    await supabase.from('wa_commands').update({ execution_status: 'failed', execution_note: err.message }).eq('id', cmdId);
+  }
+}
+
+// ===== Inbound: Message Handler =====
+async function handleInboundMessage(msg) {
+  try {
+    if (msg.key.fromMe) return;
+    const jid = msg.key.remoteJid;
+    if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us')) return;
+
+    const phoneE164 = `+${jid.replace('@s.whatsapp.net', '')}`;
+    const msgContent = msg.message || {};
+
+    // Detect type and text
+    let messageType = 'unknown';
+    let messageText = null;
+    if (msgContent.conversation) {
+      messageType = 'text'; messageText = msgContent.conversation;
+    } else if (msgContent.extendedTextMessage?.text) {
+      messageType = 'text'; messageText = msgContent.extendedTextMessage.text;
+    } else if (msgContent.buttonsResponseMessage) {
+      messageType = 'button'; messageText = msgContent.buttonsResponseMessage.selectedDisplayText;
+    } else if (msgContent.listResponseMessage) {
+      messageType = 'list'; messageText = msgContent.listResponseMessage.title;
+    } else if (msgContent.imageMessage || msgContent.videoMessage || msgContent.audioMessage || msgContent.documentMessage) {
+      messageType = 'media';
+    }
+
+    // 1. Upsert client_contact
+    const { data: contact, error: contactErr } = await supabase
+      .from('client_contacts')
+      .upsert({ phone_e164: phoneE164 }, { onConflict: 'phone_e164' })
+      .select('id').single();
+    if (contactErr) throw contactErr;
+
+    // 2. Upsert wa_conversation
+    const { data: conv, error: convErr } = await supabase
+      .from('wa_conversations')
+      .upsert(
+        { client_contact_id: contact.id, provider: 'baileys', last_inbound_at: nowIso(), updated_at: nowIso() },
+        { onConflict: 'client_contact_id,provider' }
+      )
+      .select('id').single();
+    if (convErr) throw convErr;
+
+    // 3. Persist inbound message
+    const { data: inbound, error: inboundErr } = await supabase
+      .from('wa_messages_inbound')
+      .insert({
+        conversation_id: conv.id,
+        provider: 'baileys',
+        provider_message_id: msg.key.id || null,
+        from_phone_e164: phoneE164,
+        message_type: messageType,
+        message_text: messageText,
+        payload: msgContent
+      })
+      .select('id').single();
+    if (inboundErr) throw inboundErr;
+
+    console.log(`[INBOUND] ${phoneE164} type=${messageType} text="${(messageText || '').slice(0, 60)}"`);
+
+    // 4. Skip command processing if opted out
+    const { data: prefs } = await supabase
+      .from('wa_contact_prefs').select('opt_status')
+      .eq('client_contact_id', contact.id).maybeSingle();
+    if (prefs?.opt_status === 'opted_out' || prefs?.opt_status === 'blocked') return;
+
+    // 5. Parse + persist command
+    const { command, args } = parseCommand(messageText);
+    const { data: cmd, error: cmdErr } = await supabase
+      .from('wa_commands')
+      .insert({ inbound_id: inbound.id, command, command_args: args })
+      .select('id').single();
+    if (cmdErr) throw cmdErr;
+
+    // 6. Execute (skip UNKNOWN)
+    if (command !== 'UNKNOWN') {
+      await executeCommand(command, args, contact.id, cmd.id, phoneE164);
+    }
+
+  } catch (err) {
+    console.error('[INBOUND ERROR]', err.message);
+  }
 }
 
 // ===== API =====
