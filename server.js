@@ -28,7 +28,8 @@ const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
 const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
 const CASE_SYNC_HOUR   = parseInt(process.env.CASE_SYNC_HOUR || '6', 10);
-const ADMIN_TOKEN      = process.env.ADMIN_TOKEN || '';
+const ADMIN_TOKEN        = process.env.ADMIN_TOKEN        || '';
+const DEFAULT_COURT_CODE = process.env.DEFAULT_COURT_CODE || 'TNTP05';
 
 // local runtime path inside container (ephemeral, but synced to DB)
 const WA_AUTH_PATH = process.env.WA_AUTH_PATH || "./wa_auth_runtime";
@@ -475,7 +476,34 @@ async function handleInboundMessage(msg) {
       .eq('client_contact_id', contact.id).maybeSingle();
     if (prefs?.opt_status === 'opted_out' || prefs?.opt_status === 'blocked') return;
 
-    // 5. Parse + persist command
+    // 5. Onboarding / CNR / greeting routing (takes priority over commands)
+    const upperText = (messageText || '').trim().toUpperCase();
+
+    if (upperText !== 'STOP') {
+      // 5a. Active onboarding session in progress
+      const session = await getActiveSession(phoneE164);
+      if (session) {
+        await handleOnboardingStep(session, messageText || '', phoneE164, jid, contact.id);
+        return;
+      }
+      // 5b. Direct CNR number sent
+      if (looksLikeCnr(upperText)) {
+        await handleCnrLookup(upperText, phoneE164, jid, contact.id);
+        return;
+      }
+      // 5c. Greeting → welcome message
+      if (['HI', 'HELLO', 'HEY', 'HELP', '?'].includes(upperText)) {
+        await sendWelcome(jid);
+        return;
+      }
+      // 5d. REGISTER trigger → step-by-step case search
+      if (['REGISTER', 'ADD', 'SUBSCRIBE', 'START'].includes(upperText)) {
+        await startOnboarding(phoneE164, jid);
+        return;
+      }
+    }
+
+    // 6. Normal command flow (DONE, SNOOZE, NEXT, STATUS, STOP, UNKNOWN)
     const { command, args } = parseCommand(messageText);
     const { data: cmd, error: cmdErr } = await supabase
       .from('wa_commands')
@@ -483,7 +511,6 @@ async function handleInboundMessage(msg) {
       .select('id').single();
     if (cmdErr) throw cmdErr;
 
-    // 6. Execute (skip UNKNOWN)
     if (command !== 'UNKNOWN') {
       await executeCommand(command, args, contact.id, cmd.id, phoneE164, jid);
     }
@@ -886,6 +913,251 @@ app.get('/cases/:cino', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// ===== WhatsApp Onboarding Flow =====
+
+// Detect if a message looks like a CNR number (e.g. TNTP050007832023)
+function looksLikeCnr(text) {
+  return /^[A-Z]{2,6}[0-9]{10,14}$/.test(text.trim().toUpperCase());
+}
+
+function formatDateIST(dateStr) {
+  if (!dateStr) return 'Not scheduled';
+  try {
+    return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-IN', {
+      day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata'
+    });
+  } catch { return dateStr; }
+}
+
+function formatCasePreview(c, fallbackLabel) {
+  const petitioners = Array.isArray(c.petitioners) ? c.petitioners : [];
+  const respondents  = Array.isArray(c.respondents)  ? c.respondents  : [];
+  const title   = [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || fallbackLabel || c.cnr || '';
+  const ref     = c.caseNumber || c.reference || fallbackLabel || '';
+  const court   = c.courtName  || c.court_name  || c.courtCode  || c.court_code  || '';
+  const hearing = formatDateIST(c.nextHearingDate || c.next_hearing_date);
+  const stage   = c.purpose    || c.purpose_name  || '';
+  return [
+    `📋 Case: ${ref}`,
+    `👥 ${title}`,
+    court   ? `🏛️  ${court}`            : null,
+    `📅 Next Hearing: ${hearing}`,
+    stage   ? `⚖️  Stage: ${stage}`      : null,
+  ].filter(Boolean).join('\n');
+}
+
+// Shared send helper
+async function sendWaText(jid, text) {
+  if (DRY_RUN) { console.log(`[DRY RUN][WA] ${jid}: ${text.slice(0, 80)}`); return; }
+  if (waSock && waReady) await waSock.sendMessage(jid, { text });
+}
+
+// Session CRUD
+async function getActiveSession(phoneE164) {
+  const { data } = await supabase
+    .from('wa_onboarding_sessions')
+    .select('*')
+    .eq('phone_e164', phoneE164)
+    .gt('expires_at', nowIso())
+    .maybeSingle();
+  return data;
+}
+
+async function upsertSession(phoneE164, step, sessionData, candidateCino = null, candidateCase = null) {
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  await supabase.from('wa_onboarding_sessions').upsert(
+    { phone_e164: phoneE164, step, session_data: sessionData,
+      candidate_cino: candidateCino, candidate_case: candidateCase,
+      expires_at: expiresAt, updated_at: nowIso() },
+    { onConflict: 'phone_e164' }
+  );
+}
+
+async function clearSession(phoneE164) {
+  await supabase.from('wa_onboarding_sessions').delete().eq('phone_e164', phoneE164);
+}
+
+// Search eCourts by case type + number + year
+async function searchCaseByDetails(caseType, caseNumber, year) {
+  if (!ECOURTS_API_KEY) return [];
+  const params = new URLSearchParams({
+    query:      `${caseType} ${caseNumber}/${year}`,
+    courtCodes: DEFAULT_COURT_CODE,
+  });
+  const res = await fetch(`${ECOURTS_API_BASE}/api/partner/search?${params}`,
+    { headers: { Authorization: `Bearer ${ECOURTS_API_KEY}` } });
+  if (!res.ok) return [];
+  const json = await res.json();
+  return json?.data?.results ?? [];
+}
+
+// Link phone to case in case_contacts and schedule reminder
+async function linkContactToCase(cino, phoneE164, contactId) {
+  await supabase.from('case_contacts').upsert(
+    { cino, client_contact_id: contactId, role: 'petitioner', updated_at: nowIso() },
+    { onConflict: 'cino,client_contact_id' }
+  );
+  const { data: caseRow } = await supabase.from('cases').select('*').eq('cino', cino).maybeSingle();
+  if (caseRow) {
+    const { data: cc } = await supabase.from('client_contacts').select('name').eq('id', contactId).maybeSingle();
+    await scheduleReminderForContact(cino, caseRow, phoneE164, cc?.name ?? null);
+  }
+  return caseRow;
+}
+
+// Direct CNR lookup path (user sends CNR directly)
+async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
+  await sendWaText(jid, '🔍 Looking up your case...');
+  try {
+    const apiData = await fetchCaseFromApi(cnr);
+    if (!apiData) {
+      await sendWaText(jid,
+        `❌ No case found for CNR *${cnr}*.\n\n` +
+        `Please check the number and try again, or reply *REGISTER* to search step by step.`);
+      return;
+    }
+    const preview = formatCasePreview(apiData, apiData.caseNumber);
+    await upsertSession(phoneE164, 'confirm', { cnr_path: true }, cnr, apiData);
+    await sendWaText(jid,
+      `Found your case:\n\n${preview}\n\n` +
+      `Reply *YES* to subscribe to hearing reminders, or *NO* to cancel.`);
+  } catch (e) {
+    console.error('[CNR LOOKUP]', e.message);
+    await sendWaText(jid,
+      `❌ Could not fetch case details right now. Please try again later.\n\n` +
+      `Or reply *REGISTER* to search step by step.`);
+  }
+}
+
+// Greeting → welcome message (does NOT start step-by-step flow)
+async function sendWelcome(jid) {
+  await sendWaText(jid,
+    `Welcome to *AFS Legal* hearing reminders! ⚖️\n\n` +
+    `I can send you a WhatsApp reminder before each court hearing.\n\n` +
+    `*How to register your case:*\n` +
+    `• Send your *CNR number* directly (e.g. TNTP050007832023)\n` +
+    `• Or reply *REGISTER* to find your case step by step\n\n` +
+    `*Other commands:*\n` +
+    `  STATUS · NEXT · DONE · SNOOZE · STOP`);
+}
+
+// REGISTER → step-by-step case lookup (3 questions)
+async function startOnboarding(phoneE164, jid) {
+  await clearSession(phoneE164);
+  await upsertSession(phoneE164, 'case_type', {});
+  await sendWaText(jid,
+    `Let's find your case. I'll ask 3 quick questions.\n\n` +
+    `*Step 1 / 3 — Case Type*\n` +
+    `Reply with your case type code:\n` +
+    `  *OS* – Original Suit\n` +
+    `  *IA* – Interlocutory Application\n` +
+    `  *EP* – Execution Petition\n` +
+    `  *AS* – Appeal Suit\n` +
+    `  *RC* – Rent Control\n\n` +
+    `(Reply with the code, e.g. *OS*)\n\n` +
+    `Reply *CANCEL* at any time to stop.`);
+}
+
+// Handle each step of the onboarding conversation
+async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
+  const input = text.trim();
+  const upper = input.toUpperCase();
+  const data  = session.session_data || {};
+
+  if (upper === 'CANCEL') {
+    await clearSession(phoneE164);
+    await sendWaText(jid, 'Cancelled. Reply *REGISTER* to start again.');
+    return;
+  }
+
+  if (session.step === 'case_type') {
+    if (!input) { await sendWaText(jid, 'Please reply with a case type code (e.g. *OS*).'); return; }
+    await upsertSession(phoneE164, 'case_number', { ...data, case_type: upper });
+    await sendWaText(jid,
+      `*Step 2 / 3 — Case Number*\n` +
+      `What is your case number?\n` +
+      `(Just the number, e.g. *597*)`);
+
+  } else if (session.step === 'case_number') {
+    const caseNumber = input.replace(/[^0-9]/g, '');
+    if (!caseNumber) { await sendWaText(jid, 'Please enter a valid case number (digits only, e.g. *597*).'); return; }
+    await upsertSession(phoneE164, 'year', { ...data, case_number: caseNumber });
+    await sendWaText(jid,
+      `*Step 3 / 3 — Year*\n` +
+      `What year was the case filed?\n` +
+      `(4-digit year, e.g. *2023*)`);
+
+  } else if (session.step === 'year') {
+    const year = input.replace(/[^0-9]/g, '');
+    if (year.length !== 4) { await sendWaText(jid, 'Please enter a valid 4-digit year (e.g. *2023*).'); return; }
+    await sendWaText(jid, `🔍 Searching for *${data.case_type} ${data.case_number}/${year}*...`);
+
+    const results = await searchCaseByDetails(data.case_type, data.case_number, year);
+    if (!results.length) {
+      await sendWaText(jid,
+        `❌ No case found for *${data.case_type} ${data.case_number}/${year}*.\n\n` +
+        `Please check your details and reply *REGISTER* to try again.`);
+      await clearSession(phoneE164);
+      return;
+    }
+    const match   = results[0];
+    const preview = formatCasePreview(match, `${data.case_type} ${data.case_number}/${year}`);
+    await upsertSession(phoneE164, 'confirm', { ...data, year }, match.cnr, match);
+    await sendWaText(jid,
+      `Found your case:\n\n${preview}\n\n` +
+      `Reply *YES* to subscribe to hearing reminders, or *NO* to cancel.`);
+
+  } else if (session.step === 'confirm') {
+    if (upper === 'YES') {
+      const cino = session.candidate_cino;
+      if (!cino) {
+        await sendWaText(jid, 'Something went wrong. Reply *REGISTER* to start again.');
+        await clearSession(phoneE164);
+        return;
+      }
+      await sendWaText(jid, '⏳ Setting up your reminders...');
+
+      // Full sync from API; fallback to stored search result if API fails
+      try {
+        await syncOneCnr(cino);
+      } catch (e) {
+        console.error('[ONBOARD] full sync failed, using candidate:', e.message);
+        const c = session.candidate_case || {};
+        const petitioners = Array.isArray(c.petitioners) ? c.petitioners : [];
+        const respondents  = Array.isArray(c.respondents)  ? c.respondents  : [];
+        await supabase.from('cases').upsert({
+          cino,
+          title:             [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || cino,
+          case_type:         c.caseType          ?? null,
+          case_status:       'open',
+          next_hearing_date: c.nextHearingDate   ?? null,
+          petitioners, respondents,
+          court_code:        c.courtCode         ?? null,
+          last_synced_at: nowIso(), updated_at: nowIso(),
+        }, { onConflict: 'cino' });
+      }
+
+      const caseRow = await linkContactToCase(cino, phoneE164, contactId);
+      const d   = session.session_data || {};
+      const ref = caseRow?.reference
+        || (d.case_type ? `${d.case_type} ${d.case_number}/${d.year}` : cino);
+      const hearingLine = caseRow?.next_hearing_date
+        ? `\n\n📅 Your next hearing is on *${formatDateIST(caseRow.next_hearing_date)}*. I'll remind you the day before.`
+        : '';
+      await sendWaText(jid,
+        `✅ *Done!* You're subscribed to hearing reminders for *${ref}*.${hearingLine}\n\n` +
+        `Reply *STOP* anytime to unsubscribe.`);
+      await clearSession(phoneE164);
+
+    } else if (upper === 'NO' || upper === 'CANCEL') {
+      await sendWaText(jid, 'Cancelled. Reply *REGISTER* to try with different details.');
+      await clearSession(phoneE164);
+    } else {
+      await sendWaText(jid, 'Please reply *YES* to confirm or *NO* to cancel.');
+    }
+  }
+}
 
 // ===== Worker =====
 async function processOneReminder(reminder) {
