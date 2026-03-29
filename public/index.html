@@ -3,409 +3,263 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AFS Legal — Dashboard</title>
+  <title>AFS Legal — Hearing Reminder Dashboard</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
+      --bg:      #f0ebe0;
+      --surface: #faf7f2;
+      --dark:    #111318;
       --brand:   #1a3a5c;
-      --accent:  #c8942a;
-      --bg:      #f4f6f9;
-      --surface: #ffffff;
-      --border:  #dde3ec;
+      --gold:    #c8942a;
+      --gold2:   #e0a830;
+      --border:  #ddd8cc;
       --text:    #1c2b3a;
       --muted:   #6b7f94;
-      --danger:  #c0392b;
-      --warn:    #e67e22;
-      --ok:      #27ae60;
-      --info:    #2980b9;
-      --radius:  8px;
+      --red:     #c0392b;
+      --orange:  #d35400;
+      --yellow:  #c8942a;
+      --green:   #27ae60;
+      --blue:    #1565c0;
+      --radius:  6px;
     }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
+    /* HEADER */
+    header { background: var(--dark); color: #fff; border-bottom: 3px solid var(--gold); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; height: 64px; position: sticky; top: 0; z-index: 100; }
+    .logo-block { display: flex; flex-direction: column; }
+    .logo-block .name { font-size: 1.15rem; font-weight: 800; letter-spacing: .5px; }
+    .logo-block .name span { color: var(--gold); }
+    .logo-block .sub { font-size: .62rem; letter-spacing: 2px; color: #888; text-transform: uppercase; margin-top: 2px; }
+    .hdr-center { display: flex; align-items: center; gap: 10px; font-size: .78rem; color: #aaa; }
+    .hdr-center .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .hdr-center .sep { color: #555; }
+    .hdr-right { display: flex; gap: 8px; align-items: center; }
+    .hbtn { padding: 7px 16px; border-radius: var(--radius); font-size: .8rem; font-weight: 700; cursor: pointer; border: none; transition: opacity .15s; }
+    .hbtn:hover { opacity: .85; }
+    .hbtn-refresh { background: var(--gold); color: #fff; }
+    .hbtn-qr      { background: transparent; border: 1px solid #555; color: #ccc; }
+    #waStatus { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: #aaa; }
+    .wa-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
+    .wa-dot.on  { background: #2ecc71; }
+    .wa-dot.off { background: #e74c3c; }
 
-    /* ── Header ── */
-    header {
-      background: var(--brand);
-      color: #fff;
-      padding: 0 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: 56px;
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      box-shadow: 0 2px 8px rgba(0,0,0,.25);
-    }
-    .logo { font-size: 1.1rem; font-weight: 700; }
-    .logo span { color: var(--accent); }
-    .wa-badge { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; flex-shrink: 0; }
-    .dot.connected    { background: #2ecc71; }
-    .dot.disconnected { background: #e74c3c; }
+    /* PAGE TABS */
+    .page-tabs { background: var(--dark); border-bottom: 1px solid #2a2a2a; display: flex; padding: 0 24px; }
+    .ptab { padding: 10px 18px; font-size: .82rem; font-weight: 600; color: #777; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color .15s, border-color .15s; }
+    .ptab.active { color: var(--gold); border-bottom-color: var(--gold); }
 
-    /* ── Page tabs ── */
-    .page-tabs {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      padding: 0 24px;
-      gap: 0;
-    }
-    .page-tab {
-      padding: 14px 20px;
-      font-size: .9rem;
-      font-weight: 600;
-      color: var(--muted);
-      border: none;
-      background: none;
-      cursor: pointer;
-      border-bottom: 3px solid transparent;
-      margin-bottom: -1px;
-      transition: color .15s, border-color .15s;
-    }
-    .page-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
+    /* MAIN */
+    main { max-width: 1300px; margin: 0 auto; padding: 24px 20px 60px; }
 
-    /* ── Layout ── */
-    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 56px; }
+    /* STAT CARDS */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 24px; background: var(--surface); }
+    .stat-card { padding: 20px 24px; border-right: 1px solid var(--border); }
+    .stat-card:last-child { border-right: none; }
+    .stat-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .stat-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    .stat-dot.red    { background: var(--red); }
+    .stat-dot.orange { background: var(--orange); }
+    .stat-dot.yellow { background: var(--yellow); box-shadow: 0 0 0 3px rgba(200,148,42,.2); }
+    .stat-dot.empty  { background: transparent; border: 2px solid #888; }
+    .stat-label { font-size: .68rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; }
+    .stat-value { font-size: 2.6rem; font-weight: 800; line-height: 1; }
+    .stat-value.red    { color: var(--red); }
+    .stat-value.orange { color: var(--orange); }
+    .stat-value.yellow { color: var(--yellow); }
+    .stat-value.dark   { color: var(--brand); }
+    @media(max-width:600px){ .stats { grid-template-columns: 1fr 1fr; } }
 
-    /* ── Stats ── */
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 14px;
-      margin-bottom: 24px;
-    }
-    @media(max-width:800px){ .stats { grid-template-columns: 1fr 1fr; } }
-    .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px 18px;
-      display: flex; flex-direction: column; gap: 4px;
-    }
-    .stat-card .slabel { font-size: .72rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
-    .stat-card .svalue { font-size: 1.9rem; font-weight: 700; line-height: 1; }
-    .stat-card.ok     .svalue { color: var(--ok); }
-    .stat-card.warn   .svalue { color: var(--warn); }
-    .stat-card.danger .svalue { color: var(--danger); }
-    .stat-card.info   .svalue { color: var(--info); }
+    /* TOOLBAR */
+    .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+    .ftabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .ftab { padding: 7px 16px; border-radius: 20px; font-size: .8rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--border); background: var(--surface); color: var(--muted); transition: .15s; }
+    .ftab:hover { border-color: var(--gold); color: var(--gold); }
+    .ftab.active { background: var(--dark); color: #fff; border-color: var(--dark); }
+    .search-box { padding: 8px 14px; border: 1.5px solid var(--border); border-radius: 20px; font-size: .85rem; outline: none; background: var(--surface); width: 240px; }
+    .search-box:focus { border-color: var(--gold); }
 
-    /* ── Admin / sync bar ── */
-    .sync-bar {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 12px 18px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .sync-bar label { font-size: .82rem; color: var(--muted); white-space: nowrap; }
-    .sync-bar input[type=password] {
-      padding: 7px 10px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: .85rem;
-      width: 200px;
-      font-family: monospace;
-    }
-    .sync-msg { font-size: .82rem; margin-left: auto; }
-    .sync-msg.ok    { color: var(--ok); }
-    .sync-msg.error { color: var(--danger); }
+    /* TABLE */
+    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    thead tr { background: var(--dark); }
+    th { text-align: left; padding: 11px 13px; font-size: .67rem; text-transform: uppercase; letter-spacing: .9px; color: #999; font-weight: 700; white-space: nowrap; }
+    th:first-child { color: #555; width: 36px; }
+    td { padding: 11px 13px; border-top: 1px solid var(--border); vertical-align: middle; }
+    tbody tr:hover td { background: #f5f0e6; cursor: default; }
+    .no-rows td { text-align: center; padding: 48px; color: var(--muted); }
+    .cino-link { font-family: monospace; font-size: .79rem; color: var(--blue); font-weight: 600; }
+    .case-ref  { font-weight: 700; font-size: .9rem; color: var(--text); }
+    .party-main { font-size: .84rem; }
+    .party-sub  { font-size: .75rem; color: var(--muted); }
 
-    /* ── Toolbar ── */
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 14px;
-      flex-wrap: wrap;
-    }
-    .toolbar input[type=search] {
-      flex: 1; min-width: 180px;
-      padding: 8px 12px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      font-size: .9rem;
-      outline: none;
-      background: var(--surface);
-    }
-    .toolbar input[type=search]:focus { border-color: var(--brand); }
-    .ftabs { display: flex; gap: 4px; flex-wrap: wrap; }
-    .ftabs button {
-      padding: 6px 13px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      border-radius: var(--radius);
-      font-size: .8rem;
-      cursor: pointer;
-      color: var(--muted);
-      transition: .15s;
-    }
-    .ftabs button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+    /* DAYS CHIP */
+    .days-chip { display: inline-block; padding: 3px 10px; border-radius: 4px; font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; }
+    .days-today    { background: #fdecea; color: var(--red); }
+    .days-tomorrow { background: #fef3e2; color: var(--orange); }
+    .days-3days    { background: #fef9ec; color: var(--yellow); }
+    .days-future   { background: #eef6f0; color: var(--green); font-size: .78rem; }
+    .days-past     { background: #f9ebea; color: #922b21; }
 
-    /* ── Buttons ── */
-    .btn {
-      padding: 8px 16px; border: none; border-radius: var(--radius);
-      font-size: .85rem; cursor: pointer; font-weight: 600; transition: opacity .15s;
-    }
-    .btn:hover { opacity: .85; }
-    .btn-primary { background: var(--brand); color: #fff; }
-    .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    /* PREVIEW BTN */
+    .prev-btn { padding: 6px 14px; background: var(--gold); color: #fff; border: none; border-radius: var(--radius); font-size: .78rem; font-weight: 700; cursor: pointer; transition: opacity .15s; white-space: nowrap; }
+    .prev-btn:hover { opacity: .85; }
 
-    /* ── Table ── */
-    .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-    table { width: 100%; border-collapse: collapse; font-size: .87rem; }
-    thead tr { background: #f0f4f8; }
-    th {
-      text-align: left; padding: 11px 14px;
-      font-size: .71rem; text-transform: uppercase; letter-spacing: .5px;
-      color: var(--muted); white-space: nowrap;
-    }
-    td { padding: 11px 14px; border-top: 1px solid var(--border); vertical-align: middle; }
-    tbody tr:hover td { background: #f8fafc; cursor: pointer; }
-    .empty-row td { text-align: center; padding: 48px; color: var(--muted); }
+    /* MODAL */
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 16px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+    .modal-backdrop.open { opacity: 1; pointer-events: all; }
+    .modal { background: var(--surface); border-radius: 10px; width: 100%; max-width: 660px; max-height: 90vh; overflow-y: auto; box-shadow: 0 24px 64px rgba(0,0,0,.35); transform: translateY(12px); transition: transform .2s; }
+    .modal-backdrop.open .modal { transform: translateY(0); }
+    .modal-hdr { padding: 20px 24px 16px; border-bottom: 1px solid var(--border); }
+    .modal-hdr h2 { font-size: 1.2rem; font-weight: 800; }
+    .modal-hdr .meta { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+    .modal-close { float: right; background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--muted); line-height: 1; margin-top: -4px; }
+    .modal-body { padding: 20px 24px; }
+    .msg-section { margin-bottom: 20px; }
+    .msg-label { font-size: .68rem; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .msg-label svg { width: 13px; height: 13px; }
+    .no-number-warn { font-size: .8rem; color: var(--orange); display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+    .msg-box { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; font-size: .83rem; line-height: 1.65; white-space: pre-wrap; font-family: inherit; }
+    .msg-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .copy-btn    { padding: 8px 18px; background: var(--dark); color: #fff; border: none; border-radius: var(--radius); font-size: .8rem; font-weight: 700; cursor: pointer; transition: opacity .15s; }
+    .copy-btn:hover { opacity: .85; }
+    .copy-btn.copied { background: var(--green); }
+    .no-num-btn  { padding: 8px 18px; background: #eceff1; color: #546e7a; border: none; border-radius: var(--radius); font-size: .8rem; font-weight: 700; cursor: default; }
 
-    /* ── Badges ── */
-    .badge {
-      display: inline-block; padding: 2px 9px; border-radius: 12px;
-      font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
-    }
-    .badge-open     { background: #e8f5e9; color: #27ae60; }
-    .badge-closed   { background: #eceff1; color: #78909c; }
+    /* SPINNER */
+    .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: var(--gold); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: middle; }
+    @keyframes sp { to { transform: rotate(360deg); } }
+
+    /* PAGE SECTIONS */
+    .page-sec { display: none; }
+    .page-sec.active { display: block; }
+
+    /* REMINDERS TABLE (second tab) */
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
     .badge-pending  { background: #e3f2fd; color: #1565c0; }
     .badge-retrying { background: #fff3e0; color: #e65100; }
     .badge-notified { background: #e8f5e9; color: #2e7d32; }
     .badge-failed   { background: #fdecea; color: #c62828; }
-
-    /* ── Tier pill ── */
-    .tier-pill {
-      display: inline-block; padding: 1px 7px; border-radius: 10px;
-      font-size: .7rem; font-weight: 700; margin-right: 5px;
-      background: #ede9fe; color: #5b21b6;
-    }
-
-    /* ── Date chip ── */
-    .dchip {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 2px 9px; border-radius: 12px; font-size: .79rem; font-weight: 600;
-    }
-    .dchip-past   { background: #fdecea; color: var(--danger); }
-    .dchip-today  { background: #fff3e0; color: var(--warn); }
-    .dchip-week   { background: #fff8e1; color: #f57f17; }
-    .dchip-future { background: #e8f5e9; color: var(--ok); }
-    .dchip-none   { background: #f5f5f5; color: var(--muted); font-weight: 400; }
-
-    /* ── Days-left pill ── */
-    .dleft {
-      display: inline-block; padding: 2px 9px; border-radius: 12px;
-      font-size: .78rem; font-weight: 700; min-width: 36px; text-align: center;
-    }
-    .dleft-over  { background: #fdecea; color: var(--danger); }
-    .dleft-today { background: #fff3e0; color: var(--warn); }
-    .dleft-soon  { background: #fff8e1; color: #f57f17; }
-    .dleft-ok    { background: #e8f5e9; color: var(--ok); }
-
-    /* ── Typography helpers ── */
-    .mono  { font-family: monospace; font-size: .82rem; }
-    .muted { color: var(--muted); }
-    .sub   { font-size: .77rem; color: var(--muted); margin-top: 2px; }
-    .fw    { font-weight: 600; }
-
-    /* ── Modal ── */
-    .modal-backdrop {
-      position: fixed; inset: 0;
-      background: rgba(0,0,0,.45);
-      z-index: 200;
-      display: flex; align-items: center; justify-content: center;
-      padding: 16px;
-      opacity: 0; pointer-events: none; transition: opacity .2s;
-    }
-    .modal-backdrop.open { opacity: 1; pointer-events: all; }
-    .modal {
-      background: var(--surface); border-radius: 12px;
-      width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
-      box-shadow: 0 20px 60px rgba(0,0,0,.3);
-      transform: translateY(16px); transition: transform .2s;
-    }
-    .modal-backdrop.open .modal { transform: translateY(0); }
-    .modal-hdr {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 22px; border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: var(--surface); z-index: 1;
-    }
-    .modal-hdr h2 { font-size: 1rem; font-weight: 700; }
-    .modal-close {
-      background: none; border: none; font-size: 1.5rem;
-      cursor: pointer; color: var(--muted); line-height: 1; padding: 0 4px;
-    }
-    .modal-body { padding: 20px 22px; }
-    .dgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
-    @media(max-width:480px){ .dgrid { grid-template-columns: 1fr; } }
-    .ditem .dkey { font-size: .71rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 3px; }
-    .ditem .dval { font-size: .9rem; font-weight: 500; }
-    .sec-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 18px 0 10px; }
-    .cc-list { display: flex; flex-direction: column; gap: 8px; }
-    .cc-card {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius);
-      background: #fafbfc;
-    }
-    .cc-card .ccn { font-weight: 600; font-size: .88rem; }
-    .cc-card .ccp { font-size: .8rem; color: var(--muted); font-family: monospace; }
-    .cc-card .ccr { font-size: .72rem; background: #e8edf3; color: var(--brand); padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-
-    /* ── Spinner ── */
-    .spin {
-      display: inline-block; width: 18px; height: 18px;
-      border: 2px solid #ccd; border-top-color: var(--brand);
-      border-radius: 50%; animation: sp .7s linear infinite; vertical-align: middle;
-    }
-    @keyframes sp { to { transform: rotate(360deg); } }
-
-    /* ── Page sections ── */
-    .page-section { display: none; }
-    .page-section.active { display: block; }
+    .tier-pill { display: inline-block; padding: 1px 7px; border-radius: 8px; font-size: .68rem; font-weight: 800; background: #ede9fe; color: #5b21b6; margin-right: 4px; }
+    .dleft { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .76rem; font-weight: 700; }
+    .dleft-over  { background: #fdecea; color: var(--red); }
+    .dleft-today { background: #fff3e0; color: var(--orange); }
+    .dleft-soon  { background: #fef9ec; color: var(--yellow); }
+    .dleft-ok    { background: #e8f5e9; color: var(--green); }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">AFS <span>Legal</span></div>
-  <div class="wa-badge">
-    <div class="dot" id="waDot"></div>
-    <span id="waLabel">Checking…</span>
-    <button class="btn btn-ghost" style="font-size:.78rem;padding:5px 10px;margin-left:8px" onclick="location.href='/wa/qr'">QR</button>
+  <div class="logo-block">
+    <div class="name">⚖️ AFS <span>Legal</span></div>
+    <div class="sub">Hearing Reminder Dashboard</div>
+  </div>
+  <div class="hdr-center">
+    <div class="live-dot"></div>
+    <span>Master Diary</span>
+    <span class="sep">·</span>
+    <span>Updated <span id="updatedAt">—</span></span>
+    <span class="sep">·</span>
+    <span>Next in <span id="countdown">—</span></span>
+    <span class="sep">·</span>
+    <span style="color:#2ecc71;font-weight:700">● LIVE</span>
+  </div>
+  <div class="hdr-right">
+    <div id="waStatus"><div class="wa-dot" id="waDot"></div><span id="waLabel">WA</span></div>
+    <button class="hbtn hbtn-refresh" onclick="refreshAll()">↻ Refresh</button>
+    <button class="hbtn hbtn-qr" onclick="location.href='/wa/qr'">QR</button>
   </div>
 </header>
 
-<!-- Page tabs -->
 <div class="page-tabs">
-  <button class="page-tab active" onclick="switchPage('cases',this)">Cases</button>
-  <button class="page-tab"        onclick="switchPage('reminders',this)">Reminders</button>
+  <button class="ptab active" onclick="switchPage('cases',this)">Cases</button>
+  <button class="ptab"        onclick="switchPage('reminders',this)">Reminders</button>
 </div>
 
 <main>
-
-  <!-- Stats (shared) -->
+  <!-- STAT CARDS -->
   <div class="stats">
-    <div class="stat-card ok">
-      <div class="slabel">Open Cases</div>
-      <div class="svalue" id="statOpen">—</div>
-    </div>
-    <div class="stat-card warn">
-      <div class="slabel">Hearing ≤ 7 Days</div>
-      <div class="svalue" id="statUpcoming">—</div>
-    </div>
-    <div class="stat-card danger">
-      <div class="slabel">Past / Stale</div>
-      <div class="svalue" id="statStale">—</div>
+    <div class="stat-card">
+      <div class="stat-hdr"><div class="stat-dot red"></div><div class="stat-label">Today</div></div>
+      <div class="stat-value red" id="statToday">—</div>
     </div>
     <div class="stat-card">
-      <div class="slabel">Never Synced</div>
-      <div class="svalue" id="statNever">—</div>
+      <div class="stat-hdr"><div class="stat-dot orange"></div><div class="stat-label">Tomorrow</div></div>
+      <div class="stat-value orange" id="statTomorrow">—</div>
     </div>
-    <div class="stat-card info">
-      <div class="slabel">Pending Reminders</div>
-      <div class="svalue" id="statPending">—</div>
+    <div class="stat-card">
+      <div class="stat-hdr"><div class="stat-dot yellow"></div><div class="stat-label">In 3 Days</div></div>
+      <div class="stat-value yellow" id="statIn3">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-hdr"><div class="stat-dot empty"></div><div class="stat-label">Missing Numbers</div></div>
+      <div class="stat-value dark" id="statMissing">—</div>
     </div>
   </div>
 
-  <!-- Admin bar -->
-  <div class="sync-bar">
-    <label>Admin token</label>
-    <input type="password" id="adminToken" placeholder="paste token…" />
-    <button class="btn btn-primary" onclick="triggerSync()">Sync Today</button>
-    <button class="btn btn-ghost"   onclick="refreshAll()">Refresh</button>
-    <span class="sync-msg" id="syncMsg"></span>
-  </div>
-
-  <!-- ═══════════════ CASES PAGE ═══════════════ -->
-  <div class="page-section active" id="page-cases">
+  <!-- CASES PAGE -->
+  <div class="page-sec active" id="page-cases">
     <div class="toolbar">
-      <input type="search" id="caseSearch" placeholder="Search CNR, title, court…" oninput="applyCaseFilter()" />
       <div class="ftabs">
-        <button class="active" onclick="setCaseFilter('all',this)">All</button>
-        <button onclick="setCaseFilter('open',this)">Open</button>
-        <button onclick="setCaseFilter('upcoming',this)">This Week</button>
-        <button onclick="setCaseFilter('stale',this)">Stale</button>
-        <button onclick="setCaseFilter('closed',this)">Closed</button>
+        <button class="ftab active" onclick="setCaseFilter('due',this)">All Due</button>
+        <button class="ftab" onclick="setCaseFilter('today',this)">Today</button>
+        <button class="ftab" onclick="setCaseFilter('tomorrow',this)">Tomorrow</button>
+        <button class="ftab" onclick="setCaseFilter('3days',this)">3 Days</button>
+        <button class="ftab" onclick="setCaseFilter('missing',this)">Missing Numbers</button>
+        <button class="ftab" onclick="setCaseFilter('all',this)">All Cases</button>
       </div>
+      <input type="search" class="search-box" id="caseSearch" placeholder="Search case, party, court…" oninput="applyCaseFilter()" />
     </div>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>CNR</th>
-            <th>Case</th>
-            <th>Court</th>
-            <th>Next Hearing</th>
-            <th>Purpose</th>
-            <th>Status</th>
-            <th>Last Synced</th>
+            <th>#</th><th>CINO</th><th>Case</th><th>Petitioner</th>
+            <th>Respondent</th><th>Court</th><th>Hearing Date</th>
+            <th>Purpose</th><th>Days</th><th>Preview</th>
           </tr>
         </thead>
         <tbody id="casesBody">
-          <tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>
+          <tr class="no-rows"><td colspan="10"><span class="spin"></span> Loading…</td></tr>
         </tbody>
       </table>
     </div>
   </div>
 
-  <!-- ═══════════════ REMINDERS PAGE ═══════════════ -->
-  <div class="page-section" id="page-reminders">
+  <!-- REMINDERS PAGE -->
+  <div class="page-sec" id="page-reminders">
     <div class="toolbar">
-      <input type="search" id="remSearch" placeholder="Search title, CNR, contact…" oninput="applyRemFilter()" />
       <div class="ftabs">
-        <button class="active" onclick="setRemFilter('all',this)">All</button>
-        <button onclick="setRemFilter('pending',this)">Pending</button>
-        <button onclick="setRemFilter('notified',this)">Notified</button>
-        <button onclick="setRemFilter('retrying',this)">Retrying</button>
-        <button onclick="setRemFilter('failed',this)">Failed</button>
+        <button class="ftab active" onclick="setRemFilter('all',this)">All</button>
+        <button class="ftab" onclick="setRemFilter('pending',this)">Pending</button>
+        <button class="ftab" onclick="setRemFilter('notified',this)">Notified</button>
+        <button class="ftab" onclick="setRemFilter('retrying',this)">Retrying</button>
+        <button class="ftab" onclick="setRemFilter('failed',this)">Failed</button>
       </div>
+      <input type="search" class="search-box" id="remSearch" placeholder="Search title, CNR, contact…" oninput="applyRemFilter()" />
     </div>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>
-            <th>Tier</th>
-            <th>Reminder</th>
-            <th>Case</th>
-            <th>Contact</th>
-            <th>Scheduled (IST)</th>
-            <th>Days Left</th>
-            <th>Status</th>
-          </tr>
+          <tr><th>Tier</th><th>Reminder</th><th>Case</th><th>Contact</th><th>Scheduled (IST)</th><th>Days Left</th><th>Status</th></tr>
         </thead>
         <tbody id="remBody">
-          <tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>
+          <tr class="no-rows"><td colspan="7"><span class="spin"></span> Loading…</td></tr>
         </tbody>
       </table>
     </div>
   </div>
-
 </main>
 
-<!-- Modal -->
+<!-- PREVIEW MODAL -->
 <div class="modal-backdrop" id="modalBackdrop" onclick="closeModal(event)">
   <div class="modal">
     <div class="modal-hdr">
-      <h2 id="modalTitle">Case Details</h2>
       <button class="modal-close" onclick="closeModal()">&times;</button>
+      <h2 id="modalTitle">—</h2>
+      <div class="meta" id="modalMeta">—</div>
     </div>
     <div class="modal-body" id="modalBody"></div>
   </div>
@@ -413,318 +267,268 @@
 
 <script>
 // ── Helpers ────────────────────────────────────────────────────────────────
-const todayStr = new Date().toISOString().split('T')[0];
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDate(d){
+  if(!d) return '—';
+  return new Date(d+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+}
+function fmtDateTime(ts){
+  if(!ts) return '—';
+  return new Date(ts).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function nowIST(){
+  return new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+const todayStr    = new Date().toISOString().split('T')[0];
+const tomorrowStr = new Date(Date.now()+86400000).toISOString().split('T')[0];
+const in3DaysStr  = new Date(Date.now()+3*86400000).toISOString().split('T')[0];
 
-function esc(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function daysChip(d){
+  if(!d) return '<span class="days-chip days-future">—</span>';
+  if(d===todayStr)    return '<span class="days-chip days-today">Today</span>';
+  if(d===tomorrowStr) return '<span class="days-chip days-tomorrow">Tomorrow</span>';
+  if(d===in3DaysStr)  return '<span class="days-chip days-3days">3 Days</span>';
+  const diff = Math.ceil((new Date(d)-new Date(todayStr))/86400000);
+  if(diff<0)  return `<span class="days-chip days-past">${Math.abs(diff)}d ago</span>`;
+  if(diff<=7) return `<span class="days-chip days-future">${diff} days</span>`;
+  return `<span class="days-chip days-future">${fmtDate(d)}</span>`;
 }
 
-function fmtDate(d) {
-  if (!d) return '—';
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+function partyName(arr, n=1){
+  const a = (arr||[]).map(p=>p.name||p).filter(Boolean);
+  if(!a.length) return '—';
+  if(a.length<=n) return a.join(', ');
+  return a[0] + ` <span class="party-sub">+${a.length-1} others</span>`;
 }
 
-function fmtDateTime(ts) {
-  if (!ts) return '—';
-  return new Date(ts).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    day:'2-digit', month:'short', year:'numeric',
-    hour:'2-digit', minute:'2-digit'
-  });
+function badgeRem(s){
+  const m={pending:'badge-pending',retrying:'badge-retrying',notified:'badge-notified',failed:'badge-failed'};
+  return `<span class="badge ${m[s]||'badge-failed'}">${esc(s)}</span>`;
 }
-
-function fmtSynced(ts) {
-  if (!ts) return '<span style="color:var(--danger);font-size:.77rem">Never</span>';
-  const diff = Date.now() - new Date(ts);
-  if (diff < 3600000)  return Math.round(diff/60000) + 'm ago';
-  if (diff < 86400000) return Math.round(diff/3600000) + 'h ago';
-  return new Date(ts).toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
-}
-
-function dateChip(d) {
-  if (!d) return '<span class="dchip dchip-none">Not set</span>';
-  if (d < todayStr) return `<span class="dchip dchip-past">${fmtDate(d)} ⚠</span>`;
-  const days = Math.ceil((new Date(d) - new Date(todayStr)) / 86400000);
-  if (days === 0) return `<span class="dchip dchip-today">Today</span>`;
-  if (days <= 7)  return `<span class="dchip dchip-week">${fmtDate(d)} (${days}d)</span>`;
-  return `<span class="dchip dchip-future">${fmtDate(d)}</span>`;
-}
-
-function daysLeftPill(ts) {
-  if (!ts) return '<span class="dleft dleft-ok">—</span>';
-  const days = Math.round((new Date(ts) - Date.now()) / 86400000);
-  if (days < 0)  return `<span class="dleft dleft-over">${days}d</span>`;
-  if (days === 0) return `<span class="dleft dleft-today">Today</span>`;
-  if (days <= 3)  return `<span class="dleft dleft-soon">${days}d</span>`;
-  return `<span class="dleft dleft-ok">${days}d</span>`;
-}
-
-function statusBadge(s) {
-  const map = {
-    open:'badge-open', closed:'badge-closed',
-    pending:'badge-pending', retrying:'badge-retrying',
-    notified:'badge-notified', failed:'badge-failed',
-  };
-  return `<span class="badge ${map[s]||'badge-closed'}">${esc(s)}</span>`;
-}
-
-function tierPill(title) {
-  const m = String(title).match(/\b(T-\d+)\b/i);
-  return m ? `<span class="tier-pill">${m[1].toUpperCase()}</span>` : '';
+function dLeftPill(ts){
+  if(!ts) return '—';
+  const d=Math.round((new Date(ts)-Date.now())/86400000);
+  if(d<0)  return `<span class="dleft dleft-over">${d}d</span>`;
+  if(d===0) return `<span class="dleft dleft-today">Today</span>`;
+  if(d<=3)  return `<span class="dleft dleft-soon">${d}d</span>`;
+  return `<span class="dleft dleft-ok">${d}d</span>`;
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
-let allCases     = [];
-let allReminders = [];
-let caseFilter   = 'all';
-let remFilter    = 'all';
+let allCases=[], allReminders=[], caseFilter='due', remFilter='all';
 
-// ── Page switching ─────────────────────────────────────────────────────────
-function switchPage(name, btn) {
-  document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.page-tab').forEach(b => b.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
+// ── Page switch ────────────────────────────────────────────────────────────
+function switchPage(name, btn){
+  document.querySelectorAll('.page-sec').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.ptab').forEach(b=>b.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
   btn.classList.add('active');
-  if (name === 'reminders' && allReminders.length === 0) loadReminders();
+  if(name==='reminders' && !allReminders.length) loadReminders();
 }
 
 // ── Load data ──────────────────────────────────────────────────────────────
-async function loadStats() {
-  try {
-    const r = await fetch('/api/stats');
-    const s = await r.json();
-    document.getElementById('statOpen').textContent     = s.open_cases      ?? '—';
-    document.getElementById('statUpcoming').textContent = s.upcoming_7_days  ?? '—';
-    document.getElementById('statStale').textContent    = s.stale_dates      ?? '—';
-    document.getElementById('statNever').textContent    = s.never_synced     ?? '—';
-    document.getElementById('statPending').textContent  = s.pending_reminders ?? '—';
-  } catch { /* non-critical */ }
+async function loadStats(){
+  try{
+    const s=await(await fetch('/api/stats')).json();
+    document.getElementById('statToday').textContent   = s.today           ?? '—';
+    document.getElementById('statTomorrow').textContent= s.tomorrow         ?? '—';
+    document.getElementById('statIn3').textContent     = s.in_3_days        ?? '—';
+    document.getElementById('statMissing').textContent = s.missing_numbers  ?? '—';
+  }catch{}
 }
 
-async function loadCases() {
-  document.getElementById('casesBody').innerHTML =
-    '<tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>';
-  try {
-    const r = await fetch('/cases');
-    allCases = (await r.json()).cases || [];
+async function loadCases(){
+  document.getElementById('casesBody').innerHTML='<tr class="no-rows"><td colspan="10"><span class="spin"></span> Loading…</td></tr>';
+  try{
+    const j=await(await fetch('/cases')).json();
+    allCases=j.cases||[];
     applyCaseFilter();
-  } catch(e) {
-    document.getElementById('casesBody').innerHTML =
-      `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed: ${esc(e.message)}</td></tr>`;
+    document.getElementById('updatedAt').textContent=nowIST();
+  }catch(e){
+    document.getElementById('casesBody').innerHTML=`<tr class="no-rows"><td colspan="10" style="color:var(--red)">Error: ${esc(e.message)}</td></tr>`;
   }
 }
 
-async function loadReminders() {
-  document.getElementById('remBody').innerHTML =
-    '<tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>';
-  try {
-    const r = await fetch('/api/reminders');
-    allReminders = (await r.json()).reminders || [];
+async function loadReminders(){
+  document.getElementById('remBody').innerHTML='<tr class="no-rows"><td colspan="7"><span class="spin"></span> Loading…</td></tr>';
+  try{
+    const j=await(await fetch('/api/reminders')).json();
+    allReminders=j.reminders||[];
     applyRemFilter();
-  } catch(e) {
-    document.getElementById('remBody').innerHTML =
-      `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed: ${esc(e.message)}</td></tr>`;
+  }catch(e){
+    document.getElementById('remBody').innerHTML=`<tr class="no-rows"><td colspan="7" style="color:var(--red)">Error: ${esc(e.message)}</td></tr>`;
   }
 }
 
-async function loadWaStatus() {
-  try {
-    const j = await (await fetch('/wa/status')).json();
-    const ok = j.connected === true || j.status === 'connected';
-    document.getElementById('waDot').className     = 'dot ' + (ok ? 'connected' : 'disconnected');
-    document.getElementById('waLabel').textContent = ok ? 'WA Connected' : 'WA Disconnected';
-  } catch { /* ignore */ }
+async function loadWaStatus(){
+  try{
+    const j=await(await fetch('/wa/status')).json();
+    const ok=j.connected===true||j.status==='connected';
+    document.getElementById('waDot').className='wa-dot '+(ok?'on':'off');
+    document.getElementById('waLabel').textContent=ok?'WA On':'WA Off';
+  }catch{}
 }
 
-function refreshAll() {
-  loadStats();
-  loadCases();
-  if (allReminders.length > 0) loadReminders();
-}
+function refreshAll(){ loadStats(); loadCases(); if(allReminders.length) loadReminders(); resetCountdown(); }
 
-// ── Cases filter + render ──────────────────────────────────────────────────
-function setCaseFilter(f, btn) {
-  caseFilter = f;
-  document.querySelectorAll('#page-cases .ftabs button').forEach(b => b.classList.remove('active'));
+// ── Countdown (5 min auto-refresh) ────────────────────────────────────────
+const REFRESH_SEC=300;
+let countdownSec=REFRESH_SEC;
+function resetCountdown(){ countdownSec=REFRESH_SEC; }
+setInterval(()=>{
+  countdownSec--;
+  if(countdownSec<=0){ refreshAll(); return; }
+  const m=Math.floor(countdownSec/60), s=countdownSec%60;
+  document.getElementById('countdown').textContent=`${m}:${String(s).padStart(2,'0')}`;
+},1000);
+
+// ── Cases filter ───────────────────────────────────────────────────────────
+function setCaseFilter(f,btn){
+  caseFilter=f;
+  document.querySelectorAll('#page-cases .ftab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   applyCaseFilter();
 }
-
-function applyCaseFilter() {
-  const q   = document.getElementById('caseSearch').value.toLowerCase().trim();
-  const in7 = new Date(Date.now() + 7*86400000).toISOString().split('T')[0];
-  const rows = allCases.filter(c => {
-    if (q && !`${c.cino} ${c.title||''} ${c.reference||''} ${c.court_name||''} ${c.case_type||''}`.toLowerCase().includes(q)) return false;
-    if (caseFilter === 'open')     return c.case_status === 'open';
-    if (caseFilter === 'closed')   return c.case_status !== 'open';
-    if (caseFilter === 'upcoming') return c.case_status === 'open' && c.next_hearing_date >= todayStr && c.next_hearing_date <= in7;
-    if (caseFilter === 'stale')    return c.case_status === 'open' && c.next_hearing_date && c.next_hearing_date < todayStr;
-    return true;
+function applyCaseFilter(){
+  const q=document.getElementById('caseSearch').value.toLowerCase().trim();
+  const rows=allCases.filter(c=>{
+    const hasContacts=(c.case_contacts||[]).length>0;
+    if(q&&!`${c.cino} ${c.reference||''} ${c.title||''} ${c.court_name||''} ${partyName(c.petitioners)} ${partyName(c.respondents)}`.toLowerCase().includes(q)) return false;
+    if(caseFilter==='today')    return c.next_hearing_date===todayStr;
+    if(caseFilter==='tomorrow') return c.next_hearing_date===tomorrowStr;
+    if(caseFilter==='3days')    return c.next_hearing_date===in3DaysStr;
+    if(caseFilter==='missing')  return c.case_status==='open'&&!hasContacts;
+    if(caseFilter==='due')      return c.case_status==='open'&&c.next_hearing_date&&c.next_hearing_date>=todayStr;
+    return true; // 'all'
   });
   renderCases(rows);
 }
 
-function renderCases(rows) {
-  const tbody = document.getElementById('casesBody');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No cases match.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(c => {
-    const title = esc(c.title || c.reference || c.cino);
-    const sub   = c.case_type ? `<div class="sub">${esc(c.case_type)}</div>` : '';
-    return `<tr onclick="openCase('${esc(c.cino)}')">
-      <td><span class="mono" style="color:var(--brand)">${esc(c.cino)}</span></td>
-      <td><div class="fw">${title}</div>${sub}</td>
-      <td class="muted" style="font-size:.81rem">${esc(c.court_name||'—')}</td>
-      <td>${dateChip(c.next_hearing_date)}</td>
-      <td class="muted" style="font-size:.81rem">${esc(c.purpose_name||'—')}</td>
-      <td>${statusBadge(c.case_status)}</td>
-      <td style="font-size:.78rem;color:var(--muted)">${fmtSynced(c.last_synced_at)}</td>
-    </tr>`;
-  }).join('');
+function renderCases(rows){
+  const tbody=document.getElementById('casesBody');
+  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="10">No cases match.</td></tr>'; return; }
+  tbody.innerHTML=rows.map((c,i)=>`<tr>
+    <td style="color:#888;font-size:.78rem">${i+1}</td>
+    <td><span class="cino-link">${esc(c.cino)}</span></td>
+    <td><span class="case-ref">${esc(c.reference||c.title||c.cino)}</span></td>
+    <td><span class="party-main">${partyName(c.petitioners)}</span></td>
+    <td><span class="party-main">${partyName(c.respondents)}</span></td>
+    <td style="font-size:.8rem;color:var(--muted);max-width:180px">${esc(c.court_name||'—')}</td>
+    <td style="white-space:nowrap;font-size:.82rem">${c.next_hearing_date?fmtDate(c.next_hearing_date):'—'}</td>
+    <td style="font-size:.8rem;color:var(--muted)">${esc(c.purpose_name||'—')}</td>
+    <td>${daysChip(c.next_hearing_date)}</td>
+    <td><button class="prev-btn" onclick="openPreview(${i})">Preview</button></td>
+  </tr>`).join('');
+  // store filtered rows for preview lookup
+  window._filteredCases=rows;
 }
 
-// ── Reminders filter + render ──────────────────────────────────────────────
-function setRemFilter(f, btn) {
-  remFilter = f;
-  document.querySelectorAll('#page-reminders .ftabs button').forEach(b => b.classList.remove('active'));
+// ── Preview modal ──────────────────────────────────────────────────────────
+function openPreview(idx){
+  const c=window._filteredCases[idx];
+  if(!c) return;
+  document.getElementById('modalBackdrop').classList.add('open');
+  document.body.style.overflow='hidden';
+
+  const ref=c.reference||c.title||c.cino;
+  document.getElementById('modalTitle').textContent=ref;
+  document.getElementById('modalMeta').textContent=
+    `${c.cino} · ${c.court_name||'—'} · ${c.next_hearing_date?fmtDate(c.next_hearing_date):'No date'}`;
+
+  const hasContacts=(c.case_contacts||[]).length>0;
+  const pet=partyName(c.petitioners,99).replace(/<[^>]+>/g,'');
+  const res=partyName(c.respondents,99).replace(/<[^>]+>/g,'');
+
+  const diff=c.next_hearing_date?Math.ceil((new Date(c.next_hearing_date)-new Date(todayStr))/86400000):null;
+  const whenLabel=diff===null?'—':diff===0?'TODAY':diff===1?'TOMORROW':diff===3?'IN 3 DAYS':`IN ${diff} DAYS`;
+  const whenEmoji=diff===0?'🔴':diff===1?'🟠':diff===3?'🟡':'🟢';
+
+  const msg=[
+    `⚖️ *AFS Legal — Hearing Alert* ${whenEmoji} ${whenLabel}`,
+    '',
+    `*Case:* ${ref}`,
+    `*CINO:* ${c.cino}`,
+    `*Court:* ${c.court_name||'Not specified'}`,
+    `*Next Hearing:* ${c.next_hearing_date?fmtDate(c.next_hearing_date):'—'}`,
+    `*Purpose:* ${c.purpose_name||'Not specified'}`,
+    `*Stage / Notes:* ${c.stage_name||'—'}`,
+    '',
+    `*Petitioner:* ${pet}`,
+    `*Respondent:* ${res}`,
+    '',
+    'Please review case file before appearance.',
+    '— AFS Legal'
+  ].join('\n');
+
+  const warnHtml=hasContacts?'':
+    '<div class="no-number-warn">⚠ No number on file — copy message and send manually</div>';
+
+  document.getElementById('modalBody').innerHTML=`
+    <div class="msg-section">
+      <div class="msg-label">📋 ADVOCATE MESSAGE</div>
+      ${warnHtml}
+      <div class="msg-box" id="msgText">${esc(msg)}</div>
+      <div class="msg-actions">
+        <button class="copy-btn" id="copyBtn" onclick="copyMsg()">COPY</button>
+        ${hasContacts?'':'<button class="no-num-btn">NO NUMBER</button>'}
+      </div>
+    </div>`;
+  window._previewMsg=msg;
+}
+
+function copyMsg(){
+  navigator.clipboard.writeText(window._previewMsg||'').then(()=>{
+    const btn=document.getElementById('copyBtn');
+    btn.textContent='COPIED ✓'; btn.classList.add('copied');
+    setTimeout(()=>{ btn.textContent='COPY'; btn.classList.remove('copied'); },2000);
+  });
+}
+
+function closeModal(e){
+  if(e&&e.target!==document.getElementById('modalBackdrop')) return;
+  document.getElementById('modalBackdrop').classList.remove('open');
+  document.body.style.overflow='';
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+
+// ── Reminders ─────────────────────────────────────────────────────────────
+function setRemFilter(f,btn){
+  remFilter=f;
+  document.querySelectorAll('#page-reminders .ftab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   applyRemFilter();
 }
-
-function applyRemFilter() {
-  const q = document.getElementById('remSearch').value.toLowerCase().trim();
-  const rows = allReminders.filter(r => {
-    if (q && !`${r.title||''} ${r.case_cino||''} ${r.user_name||''} ${r.user_phone_e164||''}`.toLowerCase().includes(q)) return false;
-    if (remFilter !== 'all') return r.status === remFilter;
-    return true;
+function applyRemFilter(){
+  const q=document.getElementById('remSearch').value.toLowerCase().trim();
+  const rows=allReminders.filter(r=>{
+    if(q&&!`${r.title||''} ${r.case_cino||''} ${r.user_name||''} ${r.user_phone_e164||''}`.toLowerCase().includes(q)) return false;
+    return remFilter==='all'||r.status===remFilter;
   });
-  renderReminders(rows);
-}
-
-function renderReminders(rows) {
-  const tbody = document.getElementById('remBody');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No reminders match.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(r => {
-    const title     = String(r.title || '').replace(/^T-\d+\s+/i, '');
-    const nameHtml  = r.user_name
-      ? `<div class="fw" style="font-size:.85rem">${esc(r.user_name)}</div><div class="sub">${esc(r.user_phone_e164||'')}</div>`
-      : `<div class="sub">${esc(r.user_phone_e164||'—')}</div>`;
-    const cinoHtml  = r.case_cino
-      ? `<span class="mono" style="color:var(--brand);cursor:pointer" onclick="event.stopPropagation();openCase('${esc(r.case_cino)}')">${esc(r.case_cino)}</span>`
-      : '<span class="muted">—</span>';
+  const tbody=document.getElementById('remBody');
+  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="7">No reminders match.</td></tr>'; return; }
+  const tierM=String(t=>t).toString; // unused
+  tbody.innerHTML=rows.map(r=>{
+    const tier=(String(r.title||'').match(/\b(T-\d+)\b/i)||[])[1]||'';
+    const title=String(r.title||'').replace(/^T-\d+\s+/i,'');
+    const nameHtml=r.user_name
+      ?`<div style="font-weight:600;font-size:.84rem">${esc(r.user_name)}</div><div class="party-sub">${esc(r.user_phone_e164||'')}</div>`
+      :`<div class="party-sub">${esc(r.user_phone_e164||'—')}</div>`;
+    const cinoHtml=r.case_cino?`<span class="cino-link">${esc(r.case_cino)}</span>`:'—';
     return `<tr>
-      <td>${tierPill(r.title)}</td>
-      <td style="max-width:200px;font-size:.84rem">${esc(title)}</td>
+      <td>${tier?`<span class="tier-pill">${esc(tier)}</span>`:''}</td>
+      <td style="font-size:.83rem;max-width:200px">${esc(title)}</td>
       <td>${cinoHtml}</td>
       <td>${nameHtml}</td>
-      <td style="font-size:.82rem;white-space:nowrap">${fmtDateTime(r.scheduled_at_utc)}</td>
-      <td>${daysLeftPill(r.scheduled_at_utc)}</td>
-      <td>${statusBadge(r.status)}</td>
+      <td style="font-size:.81rem;white-space:nowrap">${fmtDateTime(r.scheduled_at_utc)}</td>
+      <td>${dLeftPill(r.scheduled_at_utc)}</td>
+      <td>${badgeRem(r.status)}</td>
     </tr>`;
   }).join('');
 }
 
-// ── Case detail modal ──────────────────────────────────────────────────────
-async function openCase(cino) {
-  document.getElementById('modalTitle').textContent = cino;
-  document.getElementById('modalBody').innerHTML = '<span class="spin"></span> Loading…';
-  document.getElementById('modalBackdrop').classList.add('open');
-  document.body.style.overflow = 'hidden';
-  try {
-    const { case: c, contacts } = await (await fetch(`/cases/${cino}`)).json();
-    renderCaseModal(c, contacts || []);
-  } catch(e) {
-    document.getElementById('modalBody').innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`;
-  }
-}
-
-function renderCaseModal(c, contacts) {
-  const fields = [
-    ['CNR',         `<span class="mono">${esc(c.cino)}</span>`],
-    ['Reference',   esc(c.reference || '—')],
-    ['Case Type',   esc(c.case_type || '—')],
-    ['Status',      statusBadge(c.case_status)],
-    ['Next Hearing', dateChip(c.next_hearing_date)],
-    ['Purpose',     esc(c.purpose_name || '—')],
-    ['Court',       esc(c.court_name || '—')],
-    ['Stage',       esc(c.stage_name || '—')],
-    ['Filed On',    c.filing_date ? fmtDate(c.filing_date) : '—'],
-    ['Last Synced', c.last_synced_at ? fmtDateTime(c.last_synced_at) : 'Never'],
-  ];
-  const grid = fields.map(([k,v]) =>
-    `<div class="ditem"><div class="dkey">${k}</div><div class="dval">${v}</div></div>`
-  ).join('');
-
-  const pet = (c.petitioners||[]).map(p => p.name||p).filter(Boolean).join(', ');
-  const res = (c.respondents||[]).map(p => p.name||p).filter(Boolean).join(', ');
-  const parties = (pet || res) ? `
-    <div class="sec-title">Parties</div>
-    <div style="font-size:.85rem;margin-bottom:4px"><strong>Petitioner:</strong> ${esc(pet||'—')}</div>
-    <div style="font-size:.85rem"><strong>Respondent:</strong> ${esc(res||'—')}</div>` : '';
-
-  const ccHtml = contacts.length
-    ? contacts.map(ct => `
-        <div class="cc-card">
-          <div>
-            <div class="ccn">${esc(ct.client_contacts?.name||'—')}</div>
-            <div class="ccp">${esc(ct.client_contacts?.phone_e164||'')}</div>
-          </div>
-          <span class="ccr">${esc(ct.role||'subscriber')}</span>
-        </div>`).join('')
-    : '<div style="color:var(--muted);font-size:.85rem;padding:10px 0">No contacts linked.</div>';
-
-  document.getElementById('modalTitle').textContent = c.title || c.reference || c.cino;
-  document.getElementById('modalBody').innerHTML = `
-    <div class="dgrid">${grid}</div>
-    ${parties}
-    <div class="sec-title">Linked Contacts (${contacts.length})</div>
-    <div class="cc-list">${ccHtml}</div>`;
-}
-
-function closeModal(e) {
-  if (e && e.target !== document.getElementById('modalBackdrop')) return;
-  document.getElementById('modalBackdrop').classList.remove('open');
-  document.body.style.overflow = '';
-}
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
-});
-
-// ── Admin sync ─────────────────────────────────────────────────────────────
-async function triggerSync() {
-  const token = document.getElementById('adminToken').value.trim();
-  if (!token) { showMsg('Enter admin token first', 'error'); return; }
-  showMsg('Triggering sync…', '');
-  try {
-    const r = await fetch('/sync/cases', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-      body: JSON.stringify({})
-    });
-    const j = await r.json();
-    if (!r.ok) { showMsg(j.error || 'Failed', 'error'); return; }
-    showMsg(j.message || 'Sync started', 'ok');
-    setTimeout(refreshAll, 4000);
-  } catch(e) { showMsg(e.message, 'error'); }
-}
-
-function showMsg(msg, type) {
-  const el = document.getElementById('syncMsg');
-  el.textContent = msg;
-  el.className = 'sync-msg ' + type;
-  if (type === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
-}
-
-// ── Boot ───────────────────────────────────────────────────────────────────
-loadStats();
-loadCases();
-loadWaStatus();
-setInterval(loadWaStatus, 30000);
+// ── Boot ──────────────────────────────────────────────────────────────────
+loadStats(); loadCases(); loadWaStatus();
+setInterval(loadWaStatus,30000);
 </script>
 </body>
 </html>

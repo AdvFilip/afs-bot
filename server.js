@@ -955,7 +955,7 @@ app.get('/cases', async (_req, res) => {
   try {
     const { data, error } = await supabase
       .from('cases')
-      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, last_synced_at')
+      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, stage_name, last_synced_at, petitioners, respondents, case_contacts(client_contact_id)')
       .order('next_hearing_date', { ascending: true, nullsFirst: false })
       .limit(200);
     if (error) throw error;
@@ -968,27 +968,32 @@ app.get('/cases', async (_req, res) => {
 // GET /api/stats — summary counts for the dashboard
 app.get('/api/stats', async (_req, res) => {
   try {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const in7Days  = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    const todayStr    = new Date().toISOString().split('T')[0];
+    const tomorrowStr = new Date(Date.now() + 1 * 86400000).toISOString().split('T')[0];
+    const in3DaysStr  = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
 
-    const [open, upcoming, stale, unsynced, pending] = await Promise.all([
-      supabase.from('cases').select('cino', { count: 'exact', head: true }).eq('case_status', 'open'),
+    const [todayQ, tomorrowQ, in3Q, openCinosQ, withContactsQ, pendingQ] = await Promise.all([
       supabase.from('cases').select('cino', { count: 'exact', head: true })
-        .eq('case_status', 'open').gte('next_hearing_date', todayStr).lte('next_hearing_date', in7Days),
+        .eq('case_status', 'open').eq('next_hearing_date', todayStr),
       supabase.from('cases').select('cino', { count: 'exact', head: true })
-        .eq('case_status', 'open').not('next_hearing_date', 'is', null).lt('next_hearing_date', todayStr),
+        .eq('case_status', 'open').eq('next_hearing_date', tomorrowStr),
       supabase.from('cases').select('cino', { count: 'exact', head: true })
-        .eq('case_status', 'open').is('last_synced_at', null),
+        .eq('case_status', 'open').eq('next_hearing_date', in3DaysStr),
+      supabase.from('cases').select('cino').eq('case_status', 'open'),
+      supabase.from('case_contacts').select('cino'),
       supabase.from('reminders').select('id', { count: 'exact', head: true })
         .in('status', ['pending', 'retrying']),
     ]);
 
+    const cinosWithContacts = new Set((withContactsQ.data || []).map(r => r.cino));
+    const missingNumbers    = (openCinosQ.data || []).filter(c => !cinosWithContacts.has(c.cino)).length;
+
     return res.json({
-      open_cases:          open.count     ?? 0,
-      upcoming_7_days:     upcoming.count ?? 0,
-      stale_dates:         stale.count    ?? 0,
-      never_synced:        unsynced.count ?? 0,
-      pending_reminders:   pending.count  ?? 0,
+      today:             todayQ.count    ?? 0,
+      tomorrow:          tomorrowQ.count ?? 0,
+      in_3_days:         in3Q.count      ?? 0,
+      missing_numbers:   missingNumbers,
+      pending_reminders: pendingQ.count  ?? 0,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
