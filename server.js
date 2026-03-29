@@ -25,6 +25,10 @@ const PRIMARY_PROVIDER = (process.env.PRIMARY_PROVIDER || "baileys").toLowerCase
 const SECONDARY_PROVIDER = (process.env.SECONDARY_PROVIDER || "meta").toLowerCase();
 const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
+const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
+const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
+const CASE_SYNC_HOUR   = parseInt(process.env.CASE_SYNC_HOUR || '6', 10);
+const ADMIN_TOKEN      = process.env.ADMIN_TOKEN || '';
 
 // local runtime path inside container (ephemeral, but synced to DB)
 const WA_AUTH_PATH = process.env.WA_AUTH_PATH || "./wa_auth_runtime";
@@ -564,6 +568,325 @@ app.post("/reminders/add", async (req, res) => {
   }
 });
 
+// ===== Case Sync =====
+
+function requireAdminToken(req, res) {
+  if (ADMIN_TOKEN && req.headers['x-admin-token'] !== ADMIN_TOKEN) {
+    res.status(401).json({ error: 'Unauthorized. Set x-admin-token header.' });
+    return false;
+  }
+  return true;
+}
+
+async function fetchCaseFromApi(cnr) {
+  if (!ECOURTS_API_KEY) throw new Error('ECOURTS_API_KEY not configured');
+  const url = `${ECOURTS_API_BASE}/api/partner/case/${encodeURIComponent(cnr)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${ECOURTS_API_KEY}` } });
+  if (!res.ok) throw new Error(`eCourts API ${res.status} for ${cnr}`);
+  const json = await res.json();
+  return json?.data?.courtCaseData ?? null;
+}
+
+function mapApiCaseToRow(d) {
+  const petitioners = Array.isArray(d.petitioners) ? d.petitioners : [];
+  const respondents  = Array.isArray(d.respondents)  ? d.respondents  : [];
+  const title = [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || d.caseNumber || d.cnr;
+  const acts  = Array.isArray(d.actsAndSections)
+    ? d.actsAndSections.join('; ')
+    : (typeof d.actsAndSections === 'string' ? d.actsAndSections : null);
+  return {
+    cino:                 d.cnr,
+    reference:            d.caseNumber             ?? null,
+    title,
+    case_type:            d.caseType               ?? null,
+    case_status:          d.caseStatus === 'DISPOSED' ? 'closed' : 'open',
+    filing_date:          d.filingDate             ?? null,
+    registration_date:    d.registrationDate       ?? null,
+    first_hearing_date:   d.firstHearingDate       ?? null,
+    next_hearing_date:    d.nextHearingDate         ?? null,
+    decision_date:        d.decisionDate           ?? null,
+    petitioners,
+    respondents,
+    petitioner_advocates: Array.isArray(d.petitionerAdvocates) ? d.petitionerAdvocates : [],
+    respondent_advocates: Array.isArray(d.respondentAdvocates) ? d.respondentAdvocates : [],
+    judges:               Array.isArray(d.judges)              ? d.judges              : [],
+    acts_and_sections:    acts,
+    court_name:           d.courtName              ?? null,
+    state_name:           d.state                  ?? null,
+    district_name:        d.district               ?? null,
+    court_no:             d.courtNo                ?? null,
+    bench_name:           d.benchName              ?? null,
+    purpose_name:         d.purpose                ?? null,
+    judicial_section:     d.judicialSection        ?? null,
+    court_code:           d.cnrCourtCode           ?? null,
+    filing_number:        d.filingNumber           ?? null,
+    raw_api_payload:      d,
+    last_synced_at:       nowIso(),
+    updated_at:           nowIso(),
+  };
+}
+
+// Compute reminder time: 9 AM IST (03:30 UTC) on the day before the hearing
+function reminderTimeForHearing(hearingDateStr) {
+  const hearingUtcMidnight = new Date(hearingDateStr + 'T00:00:00Z');
+  // Subtract 20.5 hours: gets us to previous day 03:30 UTC = 09:00 IST
+  return new Date(hearingUtcMidnight.getTime() - (20.5 * 60 * 60 * 1000));
+}
+
+async function scheduleReminderForContact(cino, caseRow, phone, name) {
+  if (!caseRow.next_hearing_date) return;
+  const reminderAt = reminderTimeForHearing(caseRow.next_hearing_date);
+  if (reminderAt <= new Date()) return; // already past
+
+  // Cancel any existing pending/retrying reminder for this case+contact
+  await supabase.from('reminders')
+    .update({ status: 'failed', last_error_message: 'Superseded by updated hearing date' })
+    .eq('user_phone_e164', phone)
+    .eq('case_cino', cino)
+    .in('status', ['pending', 'retrying']);
+
+  const caseRef  = caseRow.reference || cino;
+  const caseTitle = caseRow.title || caseRef;
+  const message = [
+    '⚖️ AFS Legal – Hearing Reminder',
+    '',
+    `Your case is scheduled for hearing tomorrow.`,
+    `Case: ${caseRef}`,
+    caseTitle,
+    caseRow.court_name ? `Court: ${caseRow.court_name}` : null,
+    caseRow.purpose_name ? `Purpose: ${caseRow.purpose_name}` : null,
+    '',
+    'Reply DONE once the hearing is over, or SNOOZE to delay this reminder.',
+  ].filter(l => l !== null).join('\n');
+
+  const { error: rErr } = await supabase.from('reminders').insert({
+    title:            `Hearing tomorrow: ${caseRef}`,
+    message,
+    user_phone_e164:  phone,
+    user_name:        name ?? null,
+    user_timezone:    'Asia/Kolkata',
+    scheduled_at_utc: reminderAt.toISOString(),
+    status:           'pending',
+    attempt_count:    0,
+    max_attempts:     5,
+    provider:         PRIMARY_PROVIDER,
+    case_cino:        cino,
+  });
+  if (rErr) console.error(`[SYNC] Reminder insert error for ${phone}:`, rErr.message);
+  else console.log(`[SYNC] Reminder → ${phone} at ${reminderAt.toISOString()} (${caseRow.next_hearing_date})`);
+}
+
+async function upsertCaseAndScheduleReminders(row, previousNextHearing) {
+  const { error: upsertErr } = await supabase.from('cases').upsert(row, { onConflict: 'cino' });
+  if (upsertErr) throw upsertErr;
+
+  // Only reschedule if next_hearing_date is set and has changed
+  if (!row.next_hearing_date || row.next_hearing_date === previousNextHearing) return;
+
+  const { data: contacts } = await supabase
+    .from('case_contacts')
+    .select('client_contact_id, client_contacts(phone_e164, name)')
+    .eq('cino', row.cino);
+  if (!contacts?.length) return;
+
+  for (const cc of contacts) {
+    const phone = cc.client_contacts?.phone_e164;
+    if (!phone) continue;
+    await scheduleReminderForContact(row.cino, row, phone, cc.client_contacts?.name);
+  }
+}
+
+async function syncOneCnr(cnr) {
+  const { data: existing } = await supabase
+    .from('cases').select('next_hearing_date').eq('cino', cnr).maybeSingle();
+
+  const apiData = await fetchCaseFromApi(cnr);
+  if (!apiData) { console.warn(`[SYNC] No data returned for ${cnr}`); return null; }
+
+  const row = mapApiCaseToRow(apiData);
+  await upsertCaseAndScheduleReminders(row, existing?.next_hearing_date ?? null);
+  console.log(`[SYNC] ${cnr} → next_hearing=${row.next_hearing_date}`);
+  return row.next_hearing_date;
+}
+
+async function runDailyCaseSync() {
+  console.log('[SYNC] Daily case sync starting...');
+
+  const yesterday   = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const sevenDaysAgo = new Date(); sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  // Cases to refresh: heard yesterday or earlier, not synced in 7 days, or never synced
+  const { data: staleCases, error } = await supabase
+    .from('cases')
+    .select('cino')
+    .or(`next_hearing_date.lte.${yesterday.toISOString().split('T')[0]},last_synced_at.lte.${sevenDaysAgo.toISOString()},last_synced_at.is.null`);
+
+  if (error) { console.error('[SYNC] Query error:', error.message); return; }
+  if (!staleCases?.length) { console.log('[SYNC] No stale cases to refresh.'); return; }
+
+  console.log(`[SYNC] Refreshing ${staleCases.length} case(s)...`);
+  let ok = 0, failed = 0;
+  for (const { cino } of staleCases) {
+    try { await syncOneCnr(cino); ok++; }
+    catch (e) { console.error(`[SYNC] Failed ${cino}:`, e.message); failed++; }
+    await new Promise(r => setTimeout(r, 300)); // 300ms between calls — avoids rate-limit
+  }
+  console.log(`[SYNC] Daily sync complete. ok=${ok} failed=${failed}`);
+}
+
+// POST /sync/cases — manual sync: { cnrs: ["CINO1", ...] } or empty body to run full delta sync
+app.post('/sync/cases', async (req, res) => {
+  if (!requireAdminToken(req, res)) return;
+  try {
+    const cnrs = Array.isArray(req.body?.cnrs) ? req.body.cnrs.map(s => s.trim()).filter(Boolean) : null;
+    if (cnrs?.length) {
+      const results = [];
+      for (const cnr of cnrs) {
+        try {
+          const nextHearing = await syncOneCnr(cnr);
+          results.push({ cnr, status: 'ok', next_hearing_date: nextHearing });
+        } catch (e) {
+          results.push({ cnr, status: 'error', error: e.message });
+        }
+        await new Promise(r => setTimeout(r, 300));
+      }
+      return res.json({ synced: results.length, results });
+    }
+    // No CNRs → trigger full daily sync in background
+    runDailyCaseSync().catch(e => console.error('[SYNC] bg error:', e.message));
+    return res.json({ message: 'Daily case sync triggered in background' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /sync/cases/search — seed cases via eCourts Case Search API
+// Body: { advocates, petitioners, respondents, courtCodes, query, page }
+app.post('/sync/cases/search', async (req, res) => {
+  if (!requireAdminToken(req, res)) return;
+  if (!ECOURTS_API_KEY) return res.status(503).json({ error: 'ECOURTS_API_KEY not configured' });
+  try {
+    const params = new URLSearchParams();
+    if (req.body.advocates)   params.set('advocates',   req.body.advocates);
+    if (req.body.petitioners) params.set('petitioners', req.body.petitioners);
+    if (req.body.respondents) params.set('respondents', req.body.respondents);
+    if (req.body.courtCodes)  params.set('courtCodes',  req.body.courtCodes);
+    if (req.body.query)       params.set('query',       req.body.query);
+    if (req.body.page)        params.set('page',        String(req.body.page));
+
+    const url = `${ECOURTS_API_BASE}/api/partner/search?${params.toString()}`;
+    const apiRes = await fetch(url, { headers: { Authorization: `Bearer ${ECOURTS_API_KEY}` } });
+    if (!apiRes.ok) throw new Error(`Search API returned ${apiRes.status}`);
+    const json = await apiRes.json();
+    const results = json?.data?.results ?? [];
+
+    let upserted = 0;
+    for (const item of results) {
+      if (!item.cnr) continue;
+      const petitioners = Array.isArray(item.petitioners) ? item.petitioners : [];
+      const respondents  = Array.isArray(item.respondents)  ? item.respondents  : [];
+      const row = {
+        cino:                 item.cnr,
+        reference:            item.registrationNumber ?? null,
+        title:                [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || item.cnr,
+        case_type:            item.caseType          ?? null,
+        case_status:          item.caseStatus === 'DISPOSED' ? 'closed' : 'open',
+        filing_date:          item.filingDate        ?? null,
+        next_hearing_date:    item.nextHearingDate   ?? null,
+        petitioners,
+        respondents,
+        petitioner_advocates: Array.isArray(item.petitionerAdvocates) ? item.petitionerAdvocates : [],
+        respondent_advocates: Array.isArray(item.respondentAdvocates) ? item.respondentAdvocates : [],
+        judges:               Array.isArray(item.judges) ? item.judges : [],
+        court_code:           item.courtCode         ?? null,
+        judicial_section:     item.judicialSection   ?? null,
+        raw_api_payload:      item,
+        last_synced_at:       nowIso(),
+        updated_at:           nowIso(),
+      };
+      const { error: uErr } = await supabase.from('cases').upsert(row, { onConflict: 'cino' });
+      if (uErr) console.error(`[SEARCH] upsert error ${item.cnr}:`, uErr.message);
+      else upserted++;
+    }
+    return res.json({ found: results.length, upserted });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /cases/:cino/contact — link a phone number to a case
+// Body: { phone_e164, role?: "petitioner"|"respondent"|"other", notes? }
+app.post('/cases/:cino/contact', async (req, res) => {
+  if (!requireAdminToken(req, res)) return;
+  try {
+    const { cino } = req.params;
+    const { phone_e164, role = 'petitioner', notes } = req.body;
+
+    if (!phone_e164 || !isValidE164(phone_e164)) {
+      return res.status(400).json({ error: 'phone_e164 must be valid E.164 format (e.g. +919876543210)' });
+    }
+    if (!['petitioner', 'respondent', 'other'].includes(role)) {
+      return res.status(400).json({ error: 'role must be petitioner, respondent, or other' });
+    }
+
+    const { data: caseRow } = await supabase.from('cases').select('*').eq('cino', cino).maybeSingle();
+    if (!caseRow) return res.status(404).json({ error: `Case ${cino} not found. Import it first.` });
+
+    const { data: contact, error: cErr } = await supabase
+      .from('client_contacts')
+      .upsert({ phone_e164 }, { onConflict: 'phone_e164' })
+      .select('id, name').single();
+    if (cErr) throw cErr;
+
+    const { error: linkErr } = await supabase.from('case_contacts').upsert(
+      { cino, client_contact_id: contact.id, role, notes: notes ?? null, updated_at: nowIso() },
+      { onConflict: 'cino,client_contact_id' }
+    );
+    if (linkErr) throw linkErr;
+
+    // Schedule reminder immediately if case has a future hearing
+    await scheduleReminderForContact(cino, caseRow, phone_e164, contact.name);
+
+    return res.json({ message: 'Contact linked to case', cino, phone_e164, contact_id: contact.id });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /cases — list cases ordered by next hearing date
+app.get('/cases', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('cases')
+      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, last_synced_at')
+      .order('next_hearing_date', { ascending: true, nullsFirst: false })
+      .limit(200);
+    if (error) throw error;
+    return res.json({ cases: data || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /cases/:cino — case detail with linked contacts
+app.get('/cases/:cino', async (req, res) => {
+  try {
+    const { data: caseRow, error } = await supabase
+      .from('cases').select('*').eq('cino', req.params.cino).maybeSingle();
+    if (error) throw error;
+    if (!caseRow) return res.status(404).json({ error: 'Case not found' });
+
+    const { data: contacts } = await supabase
+      .from('case_contacts')
+      .select('role, notes, created_at, client_contacts(phone_e164, name)')
+      .eq('cino', req.params.cino);
+
+    return res.json({ case: caseRow, contacts: contacts || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ===== Worker =====
 async function processOneReminder(reminder) {
   console.log(`[TRIGGER] Reminder ${reminder.id} is due`);
@@ -676,6 +999,19 @@ async function claimAndProcessDue() {
 setInterval(() => {
   claimAndProcessDue().catch((e) => console.error("SCHEDULER ERROR:", e.message));
 }, SCAN_INTERVAL_MS);
+
+// Daily case sync — fires once per day at CASE_SYNC_HOUR (default 6 AM server time)
+let lastCaseSyncDate = null;
+setInterval(() => {
+  const now = new Date();
+  if (now.getHours() === CASE_SYNC_HOUR) {
+    const dateKey = now.toISOString().split('T')[0];
+    if (lastCaseSyncDate !== dateKey) {
+      lastCaseSyncDate = dateKey;
+      runDailyCaseSync().catch(e => console.error('[SYNC] Daily sync error:', e.message));
+    }
+  }
+}, 60_000); // check every minute
 
 // ===== Start =====
 app.listen(PORT, async () => {
