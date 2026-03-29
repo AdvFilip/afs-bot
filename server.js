@@ -9,7 +9,8 @@ const {
   default: makeWASocket,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  useMultiFileAuthState
+  useMultiFileAuthState,
+  downloadMediaMessage,
 } = require("@whiskeysockets/baileys");
 
 const app = express();
@@ -403,6 +404,54 @@ async function executeCommand(command, args, contactId, cmdId, phoneE164, replyJ
   }
 }
 
+// ===== Image QR decoder =====
+// User sends a photo of a QR code → decode → extract CNR → lookup
+async function handleImageQr(msg, phoneE164, jid, contactId) {
+  await sendWaText(jid, '🔍 Scanning your image for a QR code…');
+  try {
+    const { Jimp } = require('jimp');
+    const jsQR     = require('jsqr');
+
+    const buffer = await downloadMediaMessage(msg, 'buffer', {});
+    const image  = await Jimp.fromBuffer(buffer);
+
+    // jsQR needs flat RGBA Uint8ClampedArray
+    const { data, width, height } = image.bitmap;
+    const code = jsQR(new Uint8ClampedArray(data), width, height, {
+      inversionAttempts: 'dontInvert',
+    });
+
+    if (!code) {
+      await sendWaText(jid,
+        `❌ Couldn't read the QR code.\n\n` +
+        `For a clear scan:\n` +
+        `• Make sure the full QR code is in frame\n` +
+        `• Use good lighting — no glare or shadows\n` +
+        `• Hold the camera steady and close\n\n` +
+        `Or type your *CNR number* directly (e.g. *TNTP0XXXXXXXXXX*).`);
+      return;
+    }
+
+    console.log(`[IMAGE QR] Decoded: ${code.data.slice(0, 80)}`);
+    const cnr = extractCnr(code.data);
+    if (!cnr) {
+      await sendWaText(jid,
+        `QR code read, but no CNR number found in it.\n\n` +
+        `Decoded content: _${code.data.slice(0, 120)}_\n\n` +
+        `Please scan the QR code from your *eCourts case page*, or type the CNR directly.`);
+      return;
+    }
+
+    // CNR found — proceed with normal lookup
+    await handleCnrLookup(cnr, phoneE164, jid, contactId);
+
+  } catch (e) {
+    console.error('[IMAGE QR ERROR]', e.message);
+    await sendWaText(jid,
+      `❌ Could not process the image. Please send a clearer photo, or type your CNR number directly.`);
+  }
+}
+
 // ===== Inbound: Message Handler =====
 async function handleInboundMessage(msg) {
   try {
@@ -424,7 +473,9 @@ async function handleInboundMessage(msg) {
       messageType = 'button'; messageText = msgContent.buttonsResponseMessage.selectedDisplayText;
     } else if (msgContent.listResponseMessage) {
       messageType = 'list'; messageText = msgContent.listResponseMessage.title;
-    } else if (msgContent.imageMessage || msgContent.videoMessage || msgContent.audioMessage || msgContent.documentMessage) {
+    } else if (msgContent.imageMessage) {
+      messageType = 'image';
+    } else if (msgContent.videoMessage || msgContent.audioMessage || msgContent.documentMessage) {
       messageType = 'media';
     }
 
@@ -478,7 +529,13 @@ async function handleInboundMessage(msg) {
       .eq('client_contact_id', contact.id).maybeSingle();
     if (prefs?.opt_status === 'opted_out' || prefs?.opt_status === 'blocked') return;
 
-    // 5. Onboarding / CNR / greeting routing (takes priority over commands)
+    // 5. Image → try QR decode
+    if (messageType === 'image') {
+      await handleImageQr(msg, phoneE164, jid, contact.id);
+      return;
+    }
+
+    // 6. Onboarding / CNR / greeting routing (takes priority over commands)
     const upperText = (messageText || '').trim().toUpperCase();
 
     if (upperText !== 'STOP') {
