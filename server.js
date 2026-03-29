@@ -971,7 +971,7 @@ app.get('/api/stats', async (_req, res) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const in7Days  = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
-    const [open, upcoming, stale, unsynced] = await Promise.all([
+    const [open, upcoming, stale, unsynced, pending] = await Promise.all([
       supabase.from('cases').select('cino', { count: 'exact', head: true }).eq('case_status', 'open'),
       supabase.from('cases').select('cino', { count: 'exact', head: true })
         .eq('case_status', 'open').gte('next_hearing_date', todayStr).lte('next_hearing_date', in7Days),
@@ -979,14 +979,47 @@ app.get('/api/stats', async (_req, res) => {
         .eq('case_status', 'open').not('next_hearing_date', 'is', null).lt('next_hearing_date', todayStr),
       supabase.from('cases').select('cino', { count: 'exact', head: true })
         .eq('case_status', 'open').is('last_synced_at', null),
+      supabase.from('reminders').select('id', { count: 'exact', head: true })
+        .in('status', ['pending', 'retrying']),
     ]);
 
     return res.json({
-      open_cases:         open.count     ?? 0,
-      upcoming_7_days:    upcoming.count ?? 0,
-      stale_dates:        stale.count    ?? 0,
-      never_synced:       unsynced.count ?? 0,
+      open_cases:          open.count     ?? 0,
+      upcoming_7_days:     upcoming.count ?? 0,
+      stale_dates:         stale.count    ?? 0,
+      never_synced:        unsynced.count ?? 0,
+      pending_reminders:   pending.count  ?? 0,
     });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/reminders — upcoming & recent reminders for the dashboard
+//   ?status=pending|notified|failed|all  (default: all except cancelled)
+//   ?limit=200
+app.get('/api/reminders', async (req, res) => {
+  try {
+    const statusParam = req.query.status || 'all';
+    const limit       = Math.min(parseInt(req.query.limit || '200', 10), 500);
+
+    let q = supabase
+      .from('reminders')
+      .select('id, title, status, scheduled_at_utc, user_phone_e164, user_name, case_cino, attempt_count')
+      .order('scheduled_at_utc', { ascending: true })
+      .limit(limit);
+
+    if (statusParam !== 'all') {
+      q = q.eq('status', statusParam);
+    } else {
+      // exclude old "failed" spam — keep last 30 days of failures max
+      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+      q = q.or(`status.neq.failed,scheduled_at_utc.gte.${cutoff}`);
+    }
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return res.json({ reminders: data || [] });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

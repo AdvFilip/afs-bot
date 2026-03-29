@@ -3,22 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AFS Legal — Case Dashboard</title>
+  <title>AFS Legal — Dashboard</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --brand:    #1a3a5c;
-      --accent:   #c8942a;
-      --bg:       #f4f6f9;
-      --surface:  #ffffff;
-      --border:   #dde3ec;
-      --text:     #1c2b3a;
-      --muted:    #6b7f94;
-      --danger:   #c0392b;
-      --warn:     #e67e22;
-      --ok:       #27ae60;
-      --radius:   8px;
+      --brand:   #1a3a5c;
+      --accent:  #c8942a;
+      --bg:      #f4f6f9;
+      --surface: #ffffff;
+      --border:  #dde3ec;
+      --text:    #1c2b3a;
+      --muted:   #6b7f94;
+      --danger:  #c0392b;
+      --warn:    #e67e22;
+      --ok:      #27ae60;
+      --info:    #2980b9;
+      --radius:  8px;
     }
 
     body {
@@ -28,7 +29,7 @@
       min-height: 100vh;
     }
 
-    /* ── Header ─────────────────────────────── */
+    /* ── Header ── */
     header {
       background: var(--brand);
       color: #fff;
@@ -42,35 +43,86 @@
       z-index: 100;
       box-shadow: 0 2px 8px rgba(0,0,0,.25);
     }
-    header .logo { font-size: 1.1rem; font-weight: 700; letter-spacing: .3px; }
-    header .logo span { color: var(--accent); }
-    header .wa-status { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; }
-    .dot.connected { background: #2ecc71; }
+    .logo { font-size: 1.1rem; font-weight: 700; }
+    .logo span { color: var(--accent); }
+    .wa-badge { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; flex-shrink: 0; }
+    .dot.connected    { background: #2ecc71; }
     .dot.disconnected { background: #e74c3c; }
 
-    /* ── Layout ──────────────────────────────── */
-    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+    /* ── Page tabs ── */
+    .page-tabs {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      padding: 0 24px;
+      gap: 0;
+    }
+    .page-tab {
+      padding: 14px 20px;
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--muted);
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -1px;
+      transition: color .15s, border-color .15s;
+    }
+    .page-tab.active { color: var(--brand); border-bottom-color: var(--brand); }
 
-    /* ── Stats row ───────────────────────────── */
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-    @media(max-width:700px){ .stats { grid-template-columns: 1fr 1fr; } }
+    /* ── Layout ── */
+    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 56px; }
+
+    /* ── Stats ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    @media(max-width:800px){ .stats { grid-template-columns: 1fr 1fr; } }
     .stat-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 16px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+      padding: 14px 18px;
+      display: flex; flex-direction: column; gap: 4px;
     }
-    .stat-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
-    .stat-card .value { font-size: 2rem; font-weight: 700; line-height: 1; }
-    .stat-card.warn .value  { color: var(--warn); }
-    .stat-card.danger .value { color: var(--danger); }
-    .stat-card.ok .value    { color: var(--ok); }
+    .stat-card .slabel { font-size: .72rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+    .stat-card .svalue { font-size: 1.9rem; font-weight: 700; line-height: 1; }
+    .stat-card.ok     .svalue { color: var(--ok); }
+    .stat-card.warn   .svalue { color: var(--warn); }
+    .stat-card.danger .svalue { color: var(--danger); }
+    .stat-card.info   .svalue { color: var(--info); }
 
-    /* ── Toolbar ─────────────────────────────── */
+    /* ── Admin / sync bar ── */
+    .sync-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .sync-bar label { font-size: .82rem; color: var(--muted); white-space: nowrap; }
+    .sync-bar input[type=password] {
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: .85rem;
+      width: 200px;
+      font-family: monospace;
+    }
+    .sync-msg { font-size: .82rem; margin-left: auto; }
+    .sync-msg.ok    { color: var(--ok); }
+    .sync-msg.error { color: var(--danger); }
+
+    /* ── Toolbar ── */
     .toolbar {
       display: flex;
       align-items: center;
@@ -79,8 +131,7 @@
       flex-wrap: wrap;
     }
     .toolbar input[type=search] {
-      flex: 1;
-      min-width: 180px;
+      flex: 1; min-width: 180px;
       padding: 8px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -89,90 +140,93 @@
       background: var(--surface);
     }
     .toolbar input[type=search]:focus { border-color: var(--brand); }
-    .filter-tabs { display: flex; gap: 4px; }
-    .filter-tabs button {
-      padding: 7px 14px;
+    .ftabs { display: flex; gap: 4px; flex-wrap: wrap; }
+    .ftabs button {
+      padding: 6px 13px;
       border: 1px solid var(--border);
       background: var(--surface);
       border-radius: var(--radius);
-      font-size: .82rem;
+      font-size: .8rem;
       cursor: pointer;
       color: var(--muted);
       transition: .15s;
     }
-    .filter-tabs button.active {
-      background: var(--brand);
-      color: #fff;
-      border-color: var(--brand);
-    }
+    .ftabs button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+
+    /* ── Buttons ── */
     .btn {
-      padding: 8px 16px;
-      border: none;
-      border-radius: var(--radius);
-      font-size: .85rem;
-      cursor: pointer;
-      font-weight: 600;
-      transition: opacity .15s;
+      padding: 8px 16px; border: none; border-radius: var(--radius);
+      font-size: .85rem; cursor: pointer; font-weight: 600; transition: opacity .15s;
     }
     .btn:hover { opacity: .85; }
-    .btn-primary  { background: var(--brand); color: #fff; }
-    .btn-accent   { background: var(--accent); color: #fff; }
-    .btn-ghost    { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--text); }
 
-    /* ── Table ───────────────────────────────── */
+    /* ── Table ── */
     .table-wrap {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       overflow: hidden;
     }
-    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .87rem; }
     thead tr { background: #f0f4f8; }
     th {
-      text-align: left;
-      padding: 11px 14px;
-      font-size: .72rem;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: var(--muted);
-      white-space: nowrap;
+      text-align: left; padding: 11px 14px;
+      font-size: .71rem; text-transform: uppercase; letter-spacing: .5px;
+      color: var(--muted); white-space: nowrap;
     }
     td { padding: 11px 14px; border-top: 1px solid var(--border); vertical-align: middle; }
-    tr:hover td { background: #f8fafc; cursor: pointer; }
-
-    .badge {
-      display: inline-block;
-      padding: 2px 9px;
-      border-radius: 12px;
-      font-size: .73rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: .4px;
-    }
-    .badge-open   { background: #e8f5e9; color: #27ae60; }
-    .badge-closed { background: #eceff1; color: #78909c; }
-
-    .date-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-size: .8rem;
-      font-weight: 600;
-    }
-    .date-past    { background: #fdecea; color: var(--danger); }
-    .date-week    { background: #fff3e0; color: var(--warn); }
-    .date-future  { background: #e8f5e9; color: var(--ok); }
-    .date-none    { background: #f5f5f5; color: var(--muted); font-weight: 400; }
-
-    .cino-code { font-family: monospace; font-size: .82rem; color: var(--brand); font-weight: 600; }
-    .case-title { font-weight: 500; }
-    .case-sub   { font-size: .77rem; color: var(--muted); margin-top: 2px; }
-
+    tbody tr:hover td { background: #f8fafc; cursor: pointer; }
     .empty-row td { text-align: center; padding: 48px; color: var(--muted); }
 
-    /* ── Modal ───────────────────────────────── */
+    /* ── Badges ── */
+    .badge {
+      display: inline-block; padding: 2px 9px; border-radius: 12px;
+      font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+    }
+    .badge-open     { background: #e8f5e9; color: #27ae60; }
+    .badge-closed   { background: #eceff1; color: #78909c; }
+    .badge-pending  { background: #e3f2fd; color: #1565c0; }
+    .badge-retrying { background: #fff3e0; color: #e65100; }
+    .badge-notified { background: #e8f5e9; color: #2e7d32; }
+    .badge-failed   { background: #fdecea; color: #c62828; }
+
+    /* ── Tier pill ── */
+    .tier-pill {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: .7rem; font-weight: 700; margin-right: 5px;
+      background: #ede9fe; color: #5b21b6;
+    }
+
+    /* ── Date chip ── */
+    .dchip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 9px; border-radius: 12px; font-size: .79rem; font-weight: 600;
+    }
+    .dchip-past   { background: #fdecea; color: var(--danger); }
+    .dchip-today  { background: #fff3e0; color: var(--warn); }
+    .dchip-week   { background: #fff8e1; color: #f57f17; }
+    .dchip-future { background: #e8f5e9; color: var(--ok); }
+    .dchip-none   { background: #f5f5f5; color: var(--muted); font-weight: 400; }
+
+    /* ── Days-left pill ── */
+    .dleft {
+      display: inline-block; padding: 2px 9px; border-radius: 12px;
+      font-size: .78rem; font-weight: 700; min-width: 36px; text-align: center;
+    }
+    .dleft-over  { background: #fdecea; color: var(--danger); }
+    .dleft-today { background: #fff3e0; color: var(--warn); }
+    .dleft-soon  { background: #fff8e1; color: #f57f17; }
+    .dleft-ok    { background: #e8f5e9; color: var(--ok); }
+
+    /* ── Typography helpers ── */
+    .mono  { font-family: monospace; font-size: .82rem; }
+    .muted { color: var(--muted); }
+    .sub   { font-size: .77rem; color: var(--muted); margin-top: 2px; }
+    .fw    { font-weight: 600; }
+
+    /* ── Modal ── */
     .modal-backdrop {
       position: fixed; inset: 0;
       background: rgba(0,0,0,.45);
@@ -183,170 +237,173 @@
     }
     .modal-backdrop.open { opacity: 1; pointer-events: all; }
     .modal {
-      background: var(--surface);
-      border-radius: 12px;
-      width: 100%;
-      max-width: 640px;
-      max-height: 90vh;
-      overflow-y: auto;
+      background: var(--surface); border-radius: 12px;
+      width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
       box-shadow: 0 20px 60px rgba(0,0,0,.3);
       transform: translateY(16px); transition: transform .2s;
     }
     .modal-backdrop.open .modal { transform: translateY(0); }
-    .modal-header {
+    .modal-hdr {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 18px 22px;
-      border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: var(--surface);
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--surface); z-index: 1;
     }
-    .modal-header h2 { font-size: 1rem; font-weight: 700; }
+    .modal-hdr h2 { font-size: 1rem; font-weight: 700; }
     .modal-close {
-      background: none; border: none; font-size: 1.4rem;
-      cursor: pointer; color: var(--muted); line-height: 1; padding: 2px 6px;
+      background: none; border: none; font-size: 1.5rem;
+      cursor: pointer; color: var(--muted); line-height: 1; padding: 0 4px;
     }
     .modal-body { padding: 20px 22px; }
-    .detail-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
-      margin-bottom: 20px;
-    }
-    @media(max-width:480px){ .detail-grid { grid-template-columns: 1fr; } }
-    .detail-item .key {
-      font-size: .72rem; text-transform: uppercase; letter-spacing: .5px;
-      color: var(--muted); margin-bottom: 3px;
-    }
-    .detail-item .val { font-size: .9rem; font-weight: 500; }
-    .detail-item .val.mono { font-family: monospace; font-size: .85rem; }
-
-    .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .6px;
-      color: var(--muted); margin: 18px 0 10px; }
-
-    .contacts-list { display: flex; flex-direction: column; gap: 8px; }
-    .contact-card {
+    .dgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+    @media(max-width:480px){ .dgrid { grid-template-columns: 1fr; } }
+    .ditem .dkey { font-size: .71rem; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 3px; }
+    .ditem .dval { font-size: .9rem; font-weight: 500; }
+    .sec-title { font-size: .78rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 18px 0 10px; }
+    .cc-list { display: flex; flex-direction: column; gap: 8px; }
+    .cc-card {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 14px;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
+      padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius);
       background: #fafbfc;
     }
-    .contact-card .cname { font-weight: 600; font-size: .88rem; }
-    .contact-card .cphone { font-size: .8rem; color: var(--muted); font-family: monospace; }
-    .contact-card .crole { font-size: .73rem; background: #e8edf3; color: var(--brand);
-      padding: 2px 8px; border-radius: 10px; font-weight: 600; }
-    .no-contacts { color: var(--muted); font-size: .85rem; padding: 12px 0; }
+    .cc-card .ccn { font-weight: 600; font-size: .88rem; }
+    .cc-card .ccp { font-size: .8rem; color: var(--muted); font-family: monospace; }
+    .cc-card .ccr { font-size: .72rem; background: #e8edf3; color: var(--brand); padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
-    /* ── Sync panel ───────────────────────────── */
-    .sync-panel {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px 20px;
-      margin-bottom: 24px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .sync-panel label { font-size: .82rem; color: var(--muted); white-space: nowrap; }
-    .sync-panel input {
-      padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius);
-      font-size: .85rem; width: 200px; font-family: monospace;
-    }
-    .sync-msg { font-size: .82rem; margin-left: auto; }
-    .sync-msg.ok    { color: var(--ok); }
-    .sync-msg.error { color: var(--danger); }
-
-    /* ── Loader ──────────────────────────────── */
-    .spinner {
+    /* ── Spinner ── */
+    .spin {
       display: inline-block; width: 18px; height: 18px;
-      border: 2px solid #ccd;
-      border-top-color: var(--brand);
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      vertical-align: middle;
+      border: 2px solid #ccd; border-top-color: var(--brand);
+      border-radius: 50%; animation: sp .7s linear infinite; vertical-align: middle;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes sp { to { transform: rotate(360deg); } }
+
+    /* ── Page sections ── */
+    .page-section { display: none; }
+    .page-section.active { display: block; }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="logo">AFS <span>Legal</span> &nbsp;·&nbsp; Case Dashboard</div>
-  <div class="wa-status">
+  <div class="logo">AFS <span>Legal</span></div>
+  <div class="wa-badge">
     <div class="dot" id="waDot"></div>
     <span id="waLabel">Checking…</span>
-    <button class="btn btn-ghost" style="font-size:.78rem;padding:5px 10px" onclick="location.href='/wa/qr'" title="Open QR page">QR</button>
+    <button class="btn btn-ghost" style="font-size:.78rem;padding:5px 10px;margin-left:8px" onclick="location.href='/wa/qr'">QR</button>
   </div>
 </header>
 
+<!-- Page tabs -->
+<div class="page-tabs">
+  <button class="page-tab active" onclick="switchPage('cases',this)">Cases</button>
+  <button class="page-tab"        onclick="switchPage('reminders',this)">Reminders</button>
+</div>
+
 <main>
 
-  <!-- Stats -->
-  <div class="stats" id="statsRow">
+  <!-- Stats (shared) -->
+  <div class="stats">
     <div class="stat-card ok">
-      <div class="label">Open Cases</div>
-      <div class="value" id="statOpen">—</div>
+      <div class="slabel">Open Cases</div>
+      <div class="svalue" id="statOpen">—</div>
     </div>
     <div class="stat-card warn">
-      <div class="label">Hearing ≤ 7 Days</div>
-      <div class="value" id="statUpcoming">—</div>
+      <div class="slabel">Hearing ≤ 7 Days</div>
+      <div class="svalue" id="statUpcoming">—</div>
     </div>
     <div class="stat-card danger">
-      <div class="label">Past / Stale Dates</div>
-      <div class="value" id="statStale">—</div>
+      <div class="slabel">Past / Stale</div>
+      <div class="svalue" id="statStale">—</div>
     </div>
     <div class="stat-card">
-      <div class="label">Never Synced</div>
-      <div class="value" id="statNever">—</div>
+      <div class="slabel">Never Synced</div>
+      <div class="svalue" id="statNever">—</div>
+    </div>
+    <div class="stat-card info">
+      <div class="slabel">Pending Reminders</div>
+      <div class="svalue" id="statPending">—</div>
     </div>
   </div>
 
-  <!-- Sync panel (admin) -->
-  <div class="sync-panel">
+  <!-- Admin bar -->
+  <div class="sync-bar">
     <label>Admin token</label>
     <input type="password" id="adminToken" placeholder="paste token…" />
-    <button class="btn btn-primary" onclick="triggerSync()">Sync Today's Cases</button>
-    <button class="btn btn-ghost" onclick="loadAll()">Refresh</button>
+    <button class="btn btn-primary" onclick="triggerSync()">Sync Today</button>
+    <button class="btn btn-ghost"   onclick="refreshAll()">Refresh</button>
     <span class="sync-msg" id="syncMsg"></span>
   </div>
 
-  <!-- Toolbar -->
-  <div class="toolbar">
-    <input type="search" id="searchBox" placeholder="Search CNR, title, court…" oninput="applyFilters()" />
-    <div class="filter-tabs">
-      <button class="active" data-filter="all"      onclick="setFilter('all',this)">All</button>
-      <button               data-filter="open"     onclick="setFilter('open',this)">Open</button>
-      <button               data-filter="upcoming" onclick="setFilter('upcoming',this)">This Week</button>
-      <button               data-filter="stale"    onclick="setFilter('stale',this)">Stale</button>
-      <button               data-filter="closed"   onclick="setFilter('closed',this)">Closed</button>
+  <!-- ═══════════════ CASES PAGE ═══════════════ -->
+  <div class="page-section active" id="page-cases">
+    <div class="toolbar">
+      <input type="search" id="caseSearch" placeholder="Search CNR, title, court…" oninput="applyCaseFilter()" />
+      <div class="ftabs">
+        <button class="active" onclick="setCaseFilter('all',this)">All</button>
+        <button onclick="setCaseFilter('open',this)">Open</button>
+        <button onclick="setCaseFilter('upcoming',this)">This Week</button>
+        <button onclick="setCaseFilter('stale',this)">Stale</button>
+        <button onclick="setCaseFilter('closed',this)">Closed</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>CNR</th>
+            <th>Case</th>
+            <th>Court</th>
+            <th>Next Hearing</th>
+            <th>Purpose</th>
+            <th>Status</th>
+            <th>Last Synced</th>
+          </tr>
+        </thead>
+        <tbody id="casesBody">
+          <tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
-  <!-- Table -->
-  <div class="table-wrap">
-    <table id="casesTable">
-      <thead>
-        <tr>
-          <th>CNR</th>
-          <th>Case</th>
-          <th>Court</th>
-          <th>Next Hearing</th>
-          <th>Purpose</th>
-          <th>Status</th>
-          <th>Last Synced</th>
-        </tr>
-      </thead>
-      <tbody id="casesBody">
-        <tr class="empty-row"><td colspan="7"><span class="spinner"></span>&nbsp; Loading…</td></tr>
-      </tbody>
-    </table>
+  <!-- ═══════════════ REMINDERS PAGE ═══════════════ -->
+  <div class="page-section" id="page-reminders">
+    <div class="toolbar">
+      <input type="search" id="remSearch" placeholder="Search title, CNR, contact…" oninput="applyRemFilter()" />
+      <div class="ftabs">
+        <button class="active" onclick="setRemFilter('all',this)">All</button>
+        <button onclick="setRemFilter('pending',this)">Pending</button>
+        <button onclick="setRemFilter('notified',this)">Notified</button>
+        <button onclick="setRemFilter('retrying',this)">Retrying</button>
+        <button onclick="setRemFilter('failed',this)">Failed</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tier</th>
+            <th>Reminder</th>
+            <th>Case</th>
+            <th>Contact</th>
+            <th>Scheduled (IST)</th>
+            <th>Days Left</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="remBody">
+          <tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
 </main>
 
 <!-- Modal -->
 <div class="modal-backdrop" id="modalBackdrop" onclick="closeModal(event)">
-  <div class="modal" id="modal">
-    <div class="modal-header">
+  <div class="modal">
+    <div class="modal-hdr">
       <h2 id="modalTitle">Case Details</h2>
       <button class="modal-close" onclick="closeModal()">&times;</button>
     </div>
@@ -355,233 +412,319 @@
 </div>
 
 <script>
-  // ── Utilities ─────────────────────────────────────────────────────────────
-  const today = new Date().toISOString().split('T')[0];
+// ── Helpers ────────────────────────────────────────────────────────────────
+const todayStr = new Date().toISOString().split('T')[0];
 
-  function fmtDate(d) {
-    if (!d) return '—';
-    const dt = new Date(d + 'T00:00:00');
-    return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
-  function fmtDateRelative(d) {
-    if (!d) return { label: 'Not set', cls: 'date-none' };
-    if (d < today)  return { label: fmtDate(d) + ' ⚠', cls: 'date-past' };
-    const diffDays = Math.ceil((new Date(d) - new Date(today)) / 86400000);
-    if (diffDays <= 7) return { label: fmtDate(d) + ` (${diffDays}d)`, cls: 'date-week' };
-    return { label: fmtDate(d), cls: 'date-future' };
-  }
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
 
-  function fmtSynced(ts) {
-    if (!ts) return '<span style="color:var(--danger);font-size:.78rem">Never</span>';
-    const dt = new Date(ts);
-    const diff = Date.now() - dt;
-    if (diff < 3600000) return `${Math.round(diff/60000)}m ago`;
-    if (diff < 86400000) return `${Math.round(diff/3600000)}h ago`;
-    return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
-  }
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  let allCases = [];
-  let activeFilter = 'all';
-
-  // ── Load data ─────────────────────────────────────────────────────────────
-  async function loadStats() {
-    try {
-      const r = await fetch('/api/stats');
-      const s = await r.json();
-      document.getElementById('statOpen').textContent     = s.open_cases     ?? '—';
-      document.getElementById('statUpcoming').textContent = s.upcoming_7_days ?? '—';
-      document.getElementById('statStale').textContent    = s.stale_dates     ?? '—';
-      document.getElementById('statNever').textContent    = s.never_synced    ?? '—';
-    } catch(e) { /* non-critical */ }
-  }
-
-  async function loadAll() {
-    document.getElementById('casesBody').innerHTML =
-      '<tr class="empty-row"><td colspan="7"><span class="spinner"></span>&nbsp; Loading…</td></tr>';
-    try {
-      const r = await fetch('/cases');
-      const j = await r.json();
-      allCases = j.cases || [];
-      applyFilters();
-      loadStats();
-    } catch(e) {
-      document.getElementById('casesBody').innerHTML =
-        `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed to load: ${e.message}</td></tr>`;
-    }
-  }
-
-  async function loadWaStatus() {
-    try {
-      const r = await fetch('/wa/status');
-      const j = await r.json();
-      const connected = j.connected === true || j.status === 'connected';
-      document.getElementById('waDot').className   = 'dot ' + (connected ? 'connected' : 'disconnected');
-      document.getElementById('waLabel').textContent = connected ? 'WA Connected' : 'WA Disconnected';
-    } catch { /* ignore */ }
-  }
-
-  // ── Filter + render ───────────────────────────────────────────────────────
-  function setFilter(f, btn) {
-    activeFilter = f;
-    document.querySelectorAll('.filter-tabs button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    applyFilters();
-  }
-
-  function applyFilters() {
-    const q = document.getElementById('searchBox').value.toLowerCase().trim();
-    const rows = allCases.filter(c => {
-      // text search
-      if (q && !`${c.cino} ${c.title||''} ${c.reference||''} ${c.court_name||''} ${c.case_type||''}`.toLowerCase().includes(q)) return false;
-      // tab filter
-      if (activeFilter === 'open')     return c.case_status === 'open';
-      if (activeFilter === 'closed')   return c.case_status !== 'open';
-      if (activeFilter === 'upcoming') return c.case_status === 'open' && c.next_hearing_date >= today &&
-                                              c.next_hearing_date <= new Date(Date.now()+7*86400000).toISOString().split('T')[0];
-      if (activeFilter === 'stale')    return c.case_status === 'open' && c.next_hearing_date && c.next_hearing_date < today;
-      return true;
-    });
-    renderTable(rows);
-  }
-
-  function renderTable(rows) {
-    const tbody = document.getElementById('casesBody');
-    if (!rows.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No cases match.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = rows.map(c => {
-      const { label, cls } = fmtDateRelative(c.next_hearing_date);
-      const statusBadge = c.case_status === 'open'
-        ? '<span class="badge badge-open">Open</span>'
-        : '<span class="badge badge-closed">Closed</span>';
-      const title = c.title || c.reference || c.cino;
-      const sub   = c.case_type ? `<div class="case-sub">${c.case_type}</div>` : '';
-      return `<tr onclick="openCase('${c.cino}')">
-        <td><span class="cino-code">${c.cino}</span></td>
-        <td><div class="case-title">${esc(title)}</div>${sub}</td>
-        <td style="font-size:.82rem;color:var(--muted)">${esc(c.court_name||'—')}</td>
-        <td><span class="date-chip ${cls}">${label}</span></td>
-        <td style="font-size:.82rem;color:var(--muted)">${esc(c.purpose_name||'—')}</td>
-        <td>${statusBadge}</td>
-        <td style="font-size:.78rem;color:var(--muted)">${fmtSynced(c.last_synced_at)}</td>
-      </tr>`;
-    }).join('');
-  }
-
-  function esc(s) {
-    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  // ── Case detail modal ─────────────────────────────────────────────────────
-  async function openCase(cino) {
-    document.getElementById('modalTitle').textContent = cino;
-    document.getElementById('modalBody').innerHTML = '<span class="spinner"></span> Loading…';
-    document.getElementById('modalBackdrop').classList.add('open');
-    document.body.style.overflow = 'hidden';
-
-    try {
-      const r = await fetch(`/cases/${cino}`);
-      const { case: c, contacts } = await r.json();
-      renderModal(c, contacts || []);
-    } catch(e) {
-      document.getElementById('modalBody').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
-    }
-  }
-
-  function renderModal(c, contacts) {
-    const { label, cls } = fmtDateRelative(c.next_hearing_date);
-
-    const fields = [
-      ['CNR',           `<span class="mono">${c.cino}</span>`],
-      ['Reference',     c.reference || '—'],
-      ['Case Type',     c.case_type || '—'],
-      ['Status',        c.case_status === 'open'
-        ? '<span class="badge badge-open">Open</span>'
-        : '<span class="badge badge-closed">Closed</span>'],
-      ['Next Hearing',  `<span class="date-chip ${cls}" style="font-size:.82rem">${label}</span>`],
-      ['Purpose',       c.purpose_name || '—'],
-      ['Court',         c.court_name || '—'],
-      ['Stage',         c.stage_name || '—'],
-      ['Last Synced',   c.last_synced_at ? new Date(c.last_synced_at).toLocaleString('en-IN') : 'Never'],
-      ['Filed On',      c.filing_date ? fmtDate(c.filing_date) : '—'],
-    ];
-
-    const grid = fields.map(([k,v]) =>
-      `<div class="detail-item"><div class="key">${k}</div><div class="val">${v}</div></div>`
-    ).join('');
-
-    const parties = (() => {
-      const pet = (c.petitioners||[]).map(p => p.name||p).filter(Boolean).join(', ');
-      const res = (c.respondents||[]).map(p => p.name||p).filter(Boolean).join(', ');
-      if (!pet && !res) return '';
-      return `<div class="section-title">Parties</div>
-        <div style="font-size:.85rem;margin-bottom:4px"><strong>Petitioner:</strong> ${esc(pet||'—')}</div>
-        <div style="font-size:.85rem"><strong>Respondent:</strong> ${esc(res||'—')}</div>`;
-    })();
-
-    const contactsHtml = contacts.length ? contacts.map(ct => {
-      const name  = ct.client_contacts?.name  || '—';
-      const phone = ct.client_contacts?.phone_e164 || '—';
-      return `<div class="contact-card">
-        <div>
-          <div class="cname">${esc(name)}</div>
-          <div class="cphone">${esc(phone)}</div>
-        </div>
-        <span class="crole">${esc(ct.role||'subscriber')}</span>
-      </div>`;
-    }).join('') : '<div class="no-contacts">No contacts linked to this case.</div>';
-
-    document.getElementById('modalTitle').textContent = c.title || c.reference || c.cino;
-    document.getElementById('modalBody').innerHTML = `
-      <div class="detail-grid">${grid}</div>
-      ${parties}
-      <div class="section-title">Linked Contacts (${contacts.length})</div>
-      <div class="contacts-list">${contactsHtml}</div>`;
-  }
-
-  function closeModal(e) {
-    if (e && e.target !== document.getElementById('modalBackdrop')) return;
-    document.getElementById('modalBackdrop').classList.remove('open');
-    document.body.style.overflow = '';
-  }
-
-  // ── Admin sync ────────────────────────────────────────────────────────────
-  async function triggerSync() {
-    const token = document.getElementById('adminToken').value.trim();
-    if (!token) { showSyncMsg('Enter admin token first', 'error'); return; }
-    showSyncMsg('Triggering sync…', '');
-    try {
-      const r = await fetch('/sync/cases', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
-        body: JSON.stringify({})
-      });
-      const j = await r.json();
-      if (!r.ok) { showSyncMsg(j.error || 'Failed', 'error'); return; }
-      showSyncMsg(j.message || 'Sync started', 'ok');
-      setTimeout(loadAll, 4000);
-    } catch(e) { showSyncMsg(e.message, 'error'); }
-  }
-
-  function showSyncMsg(msg, type) {
-    const el = document.getElementById('syncMsg');
-    el.textContent = msg;
-    el.className = 'sync-msg ' + type;
-    if (type === 'ok') setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 5000);
-  }
-
-  // ── Keyboard close ────────────────────────────────────────────────────────
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { document.getElementById('modalBackdrop').classList.remove('open'); document.body.style.overflow = ''; }
+function fmtDateTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day:'2-digit', month:'short', year:'numeric',
+    hour:'2-digit', minute:'2-digit'
   });
+}
 
-  // ── Boot ──────────────────────────────────────────────────────────────────
-  loadAll();
-  loadWaStatus();
-  setInterval(loadWaStatus, 30000);
+function fmtSynced(ts) {
+  if (!ts) return '<span style="color:var(--danger);font-size:.77rem">Never</span>';
+  const diff = Date.now() - new Date(ts);
+  if (diff < 3600000)  return Math.round(diff/60000) + 'm ago';
+  if (diff < 86400000) return Math.round(diff/3600000) + 'h ago';
+  return new Date(ts).toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
+}
+
+function dateChip(d) {
+  if (!d) return '<span class="dchip dchip-none">Not set</span>';
+  if (d < todayStr) return `<span class="dchip dchip-past">${fmtDate(d)} ⚠</span>`;
+  const days = Math.ceil((new Date(d) - new Date(todayStr)) / 86400000);
+  if (days === 0) return `<span class="dchip dchip-today">Today</span>`;
+  if (days <= 7)  return `<span class="dchip dchip-week">${fmtDate(d)} (${days}d)</span>`;
+  return `<span class="dchip dchip-future">${fmtDate(d)}</span>`;
+}
+
+function daysLeftPill(ts) {
+  if (!ts) return '<span class="dleft dleft-ok">—</span>';
+  const days = Math.round((new Date(ts) - Date.now()) / 86400000);
+  if (days < 0)  return `<span class="dleft dleft-over">${days}d</span>`;
+  if (days === 0) return `<span class="dleft dleft-today">Today</span>`;
+  if (days <= 3)  return `<span class="dleft dleft-soon">${days}d</span>`;
+  return `<span class="dleft dleft-ok">${days}d</span>`;
+}
+
+function statusBadge(s) {
+  const map = {
+    open:'badge-open', closed:'badge-closed',
+    pending:'badge-pending', retrying:'badge-retrying',
+    notified:'badge-notified', failed:'badge-failed',
+  };
+  return `<span class="badge ${map[s]||'badge-closed'}">${esc(s)}</span>`;
+}
+
+function tierPill(title) {
+  const m = String(title).match(/\b(T-\d+)\b/i);
+  return m ? `<span class="tier-pill">${m[1].toUpperCase()}</span>` : '';
+}
+
+// ── State ──────────────────────────────────────────────────────────────────
+let allCases     = [];
+let allReminders = [];
+let caseFilter   = 'all';
+let remFilter    = 'all';
+
+// ── Page switching ─────────────────────────────────────────────────────────
+function switchPage(name, btn) {
+  document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.page-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'reminders' && allReminders.length === 0) loadReminders();
+}
+
+// ── Load data ──────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const s = await r.json();
+    document.getElementById('statOpen').textContent     = s.open_cases      ?? '—';
+    document.getElementById('statUpcoming').textContent = s.upcoming_7_days  ?? '—';
+    document.getElementById('statStale').textContent    = s.stale_dates      ?? '—';
+    document.getElementById('statNever').textContent    = s.never_synced     ?? '—';
+    document.getElementById('statPending').textContent  = s.pending_reminders ?? '—';
+  } catch { /* non-critical */ }
+}
+
+async function loadCases() {
+  document.getElementById('casesBody').innerHTML =
+    '<tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>';
+  try {
+    const r = await fetch('/cases');
+    allCases = (await r.json()).cases || [];
+    applyCaseFilter();
+  } catch(e) {
+    document.getElementById('casesBody').innerHTML =
+      `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function loadReminders() {
+  document.getElementById('remBody').innerHTML =
+    '<tr class="empty-row"><td colspan="7"><span class="spin"></span>&nbsp; Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/reminders');
+    allReminders = (await r.json()).reminders || [];
+    applyRemFilter();
+  } catch(e) {
+    document.getElementById('remBody').innerHTML =
+      `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function loadWaStatus() {
+  try {
+    const j = await (await fetch('/wa/status')).json();
+    const ok = j.connected === true || j.status === 'connected';
+    document.getElementById('waDot').className     = 'dot ' + (ok ? 'connected' : 'disconnected');
+    document.getElementById('waLabel').textContent = ok ? 'WA Connected' : 'WA Disconnected';
+  } catch { /* ignore */ }
+}
+
+function refreshAll() {
+  loadStats();
+  loadCases();
+  if (allReminders.length > 0) loadReminders();
+}
+
+// ── Cases filter + render ──────────────────────────────────────────────────
+function setCaseFilter(f, btn) {
+  caseFilter = f;
+  document.querySelectorAll('#page-cases .ftabs button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyCaseFilter();
+}
+
+function applyCaseFilter() {
+  const q   = document.getElementById('caseSearch').value.toLowerCase().trim();
+  const in7 = new Date(Date.now() + 7*86400000).toISOString().split('T')[0];
+  const rows = allCases.filter(c => {
+    if (q && !`${c.cino} ${c.title||''} ${c.reference||''} ${c.court_name||''} ${c.case_type||''}`.toLowerCase().includes(q)) return false;
+    if (caseFilter === 'open')     return c.case_status === 'open';
+    if (caseFilter === 'closed')   return c.case_status !== 'open';
+    if (caseFilter === 'upcoming') return c.case_status === 'open' && c.next_hearing_date >= todayStr && c.next_hearing_date <= in7;
+    if (caseFilter === 'stale')    return c.case_status === 'open' && c.next_hearing_date && c.next_hearing_date < todayStr;
+    return true;
+  });
+  renderCases(rows);
+}
+
+function renderCases(rows) {
+  const tbody = document.getElementById('casesBody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No cases match.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(c => {
+    const title = esc(c.title || c.reference || c.cino);
+    const sub   = c.case_type ? `<div class="sub">${esc(c.case_type)}</div>` : '';
+    return `<tr onclick="openCase('${esc(c.cino)}')">
+      <td><span class="mono" style="color:var(--brand)">${esc(c.cino)}</span></td>
+      <td><div class="fw">${title}</div>${sub}</td>
+      <td class="muted" style="font-size:.81rem">${esc(c.court_name||'—')}</td>
+      <td>${dateChip(c.next_hearing_date)}</td>
+      <td class="muted" style="font-size:.81rem">${esc(c.purpose_name||'—')}</td>
+      <td>${statusBadge(c.case_status)}</td>
+      <td style="font-size:.78rem;color:var(--muted)">${fmtSynced(c.last_synced_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Reminders filter + render ──────────────────────────────────────────────
+function setRemFilter(f, btn) {
+  remFilter = f;
+  document.querySelectorAll('#page-reminders .ftabs button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyRemFilter();
+}
+
+function applyRemFilter() {
+  const q = document.getElementById('remSearch').value.toLowerCase().trim();
+  const rows = allReminders.filter(r => {
+    if (q && !`${r.title||''} ${r.case_cino||''} ${r.user_name||''} ${r.user_phone_e164||''}`.toLowerCase().includes(q)) return false;
+    if (remFilter !== 'all') return r.status === remFilter;
+    return true;
+  });
+  renderReminders(rows);
+}
+
+function renderReminders(rows) {
+  const tbody = document.getElementById('remBody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No reminders match.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const title     = String(r.title || '').replace(/^T-\d+\s+/i, '');
+    const nameHtml  = r.user_name
+      ? `<div class="fw" style="font-size:.85rem">${esc(r.user_name)}</div><div class="sub">${esc(r.user_phone_e164||'')}</div>`
+      : `<div class="sub">${esc(r.user_phone_e164||'—')}</div>`;
+    const cinoHtml  = r.case_cino
+      ? `<span class="mono" style="color:var(--brand);cursor:pointer" onclick="event.stopPropagation();openCase('${esc(r.case_cino)}')">${esc(r.case_cino)}</span>`
+      : '<span class="muted">—</span>';
+    return `<tr>
+      <td>${tierPill(r.title)}</td>
+      <td style="max-width:200px;font-size:.84rem">${esc(title)}</td>
+      <td>${cinoHtml}</td>
+      <td>${nameHtml}</td>
+      <td style="font-size:.82rem;white-space:nowrap">${fmtDateTime(r.scheduled_at_utc)}</td>
+      <td>${daysLeftPill(r.scheduled_at_utc)}</td>
+      <td>${statusBadge(r.status)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Case detail modal ──────────────────────────────────────────────────────
+async function openCase(cino) {
+  document.getElementById('modalTitle').textContent = cino;
+  document.getElementById('modalBody').innerHTML = '<span class="spin"></span> Loading…';
+  document.getElementById('modalBackdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  try {
+    const { case: c, contacts } = await (await fetch(`/cases/${cino}`)).json();
+    renderCaseModal(c, contacts || []);
+  } catch(e) {
+    document.getElementById('modalBody').innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`;
+  }
+}
+
+function renderCaseModal(c, contacts) {
+  const fields = [
+    ['CNR',         `<span class="mono">${esc(c.cino)}</span>`],
+    ['Reference',   esc(c.reference || '—')],
+    ['Case Type',   esc(c.case_type || '—')],
+    ['Status',      statusBadge(c.case_status)],
+    ['Next Hearing', dateChip(c.next_hearing_date)],
+    ['Purpose',     esc(c.purpose_name || '—')],
+    ['Court',       esc(c.court_name || '—')],
+    ['Stage',       esc(c.stage_name || '—')],
+    ['Filed On',    c.filing_date ? fmtDate(c.filing_date) : '—'],
+    ['Last Synced', c.last_synced_at ? fmtDateTime(c.last_synced_at) : 'Never'],
+  ];
+  const grid = fields.map(([k,v]) =>
+    `<div class="ditem"><div class="dkey">${k}</div><div class="dval">${v}</div></div>`
+  ).join('');
+
+  const pet = (c.petitioners||[]).map(p => p.name||p).filter(Boolean).join(', ');
+  const res = (c.respondents||[]).map(p => p.name||p).filter(Boolean).join(', ');
+  const parties = (pet || res) ? `
+    <div class="sec-title">Parties</div>
+    <div style="font-size:.85rem;margin-bottom:4px"><strong>Petitioner:</strong> ${esc(pet||'—')}</div>
+    <div style="font-size:.85rem"><strong>Respondent:</strong> ${esc(res||'—')}</div>` : '';
+
+  const ccHtml = contacts.length
+    ? contacts.map(ct => `
+        <div class="cc-card">
+          <div>
+            <div class="ccn">${esc(ct.client_contacts?.name||'—')}</div>
+            <div class="ccp">${esc(ct.client_contacts?.phone_e164||'')}</div>
+          </div>
+          <span class="ccr">${esc(ct.role||'subscriber')}</span>
+        </div>`).join('')
+    : '<div style="color:var(--muted);font-size:.85rem;padding:10px 0">No contacts linked.</div>';
+
+  document.getElementById('modalTitle').textContent = c.title || c.reference || c.cino;
+  document.getElementById('modalBody').innerHTML = `
+    <div class="dgrid">${grid}</div>
+    ${parties}
+    <div class="sec-title">Linked Contacts (${contacts.length})</div>
+    <div class="cc-list">${ccHtml}</div>`;
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modalBackdrop')) return;
+  document.getElementById('modalBackdrop').classList.remove('open');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+
+// ── Admin sync ─────────────────────────────────────────────────────────────
+async function triggerSync() {
+  const token = document.getElementById('adminToken').value.trim();
+  if (!token) { showMsg('Enter admin token first', 'error'); return; }
+  showMsg('Triggering sync…', '');
+  try {
+    const r = await fetch('/sync/cases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+      body: JSON.stringify({})
+    });
+    const j = await r.json();
+    if (!r.ok) { showMsg(j.error || 'Failed', 'error'); return; }
+    showMsg(j.message || 'Sync started', 'ok');
+    setTimeout(refreshAll, 4000);
+  } catch(e) { showMsg(e.message, 'error'); }
+}
+
+function showMsg(msg, type) {
+  const el = document.getElementById('syncMsg');
+  el.textContent = msg;
+  el.className = 'sync-msg ' + type;
+  if (type === 'ok') setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 5000);
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+loadStats();
+loadCases();
+loadWaStatus();
+setInterval(loadWaStatus, 30000);
 </script>
 </body>
 </html>
