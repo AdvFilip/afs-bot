@@ -1,0 +1,4 @@
+node_modules/
+wa_auth_runtime/
+.env
+*.log
