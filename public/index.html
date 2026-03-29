@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AFS Legal — Case Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand:    #1a3a5c;
+      --accent:   #c8942a;
+      --bg:       #f4f6f9;
+      --surface:  #ffffff;
+      --border:   #dde3ec;
+      --text:     #1c2b3a;
+      --muted:    #6b7f94;
+      --danger:   #c0392b;
+      --warn:     #e67e22;
+      --ok:       #27ae60;
+      --radius:   8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────── */
+    header {
+      background: var(--brand);
+      color: #fff;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    header .logo { font-size: 1.1rem; font-weight: 700; letter-spacing: .3px; }
+    header .logo span { color: var(--accent); }
+    header .wa-status { display: flex; align-items: center; gap: 8px; font-size: .82rem; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #888; }
+    .dot.connected { background: #2ecc71; }
+    .dot.disconnected { background: #e74c3c; }
+
+    /* ── Layout ──────────────────────────────── */
+    main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+
+    /* ── Stats row ───────────────────────────── */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    @media(max-width:700px){ .stats { grid-template-columns: 1fr 1fr; } }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-card .label { font-size: .75rem; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+    .stat-card .value { font-size: 2rem; font-weight: 700; line-height: 1; }
+    .stat-card.warn .value  { color: var(--warn); }
+    .stat-card.danger .value { color: var(--danger); }
+    .stat-card.ok .value    { color: var(--ok); }
+
+    /* ── Toolbar ─────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .toolbar input[type=search] {
+      flex: 1;
+      min-width: 180px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: .9rem;
+      outline: none;
+      background: var(--surface);
+    }
+    .toolbar input[type=search]:focus { border-color: var(--brand); }
+    .filter-tabs { display: flex; gap: 4px; }
+    .filter-tabs button {
+      padding: 7px 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius);
+      font-size: .82rem;
+      cursor: pointer;
+      color: var(--muted);
+      transition: .15s;
+    }
+    .filter-tabs button.active {
+      background: var(--brand);
+      color: #fff;
+      border-color: var(--brand);
+    }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: .85rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary  { background: var(--brand); color: #fff; }
+    .btn-accent   { background: var(--accent); color: #fff; }
+    .btn-ghost    { background: transparent; border: 1px solid var(--border); color: var(--text); }
+
+    /* ── Table ───────────────────────────────── */
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    thead tr { background: #f0f4f8; }
+    th {
+      text-align: left;
+      padding: 11px 14px;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    td { padding: 11px 14px; border-top: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: #f8fafc; cursor: pointer; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: .73rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .badge-open   { background: #e8f5e9; color: #27ae60; }
+    .badge-closed { background: #eceff1; color: #78909c; }
+
+    .date-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: .8rem;
+      font-weight: 600;
+    }
+    .date-past    { background: #fdecea; color: var(--danger); }
+    .date-week    { background: #fff3e0; color: var(--warn); }
+    .date-future  { background: #e8f5e9; color: var(--ok); }
+    .date-none    { background: #f5f5f5; color: var(--muted); font-weight: 400; }
+
+    .cino-code { font-family: monospace; font-size: .82rem; color: var(--brand); font-weight: 600; }
+    .case-title { font-weight: 500; }
+    .case-sub   { font-size: .77rem; color: var(--muted); margin-top: 2px; }
+
+    .empty-row td { text-align: center; padding: 48px; color: var(--muted); }
+
+    /* ── Modal ───────────────────────────────── */
+    .modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 200;
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    .modal-backdrop.open { opacity: 1; pointer-events: all; }
+    .modal {
+      background: var(--surface);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 640px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,.3);
+      transform: translateY(16px); transition: transform .2s;
+    }
+    .modal-backdrop.open .modal { transform: translateY(0); }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--surface);
+    }
+    .modal-header h2 { font-size: 1rem; font-weight: 700; }
+    .modal-close {
+      background: none; border: none; font-size: 1.4rem;
+      cursor: pointer; color: var(--muted); line-height: 1; padding: 2px 6px;
+    }
+    .modal-body { padding: 20px 22px; }
+    .detail-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+      margin-bottom: 20px;
+    }
+    @media(max-width:480px){ .detail-grid { grid-template-columns: 1fr; } }
+    .detail-item .key {
+      font-size: .72rem; text-transform: uppercase; letter-spacing: .5px;
+      color: var(--muted); margin-bottom: 3px;
+    }
+    .detail-item .val { font-size: .9rem; font-weight: 500; }
+    .detail-item .val.mono { font-family: monospace; font-size: .85rem; }
+
+    .section-title { font-size: .8rem; text-transform: uppercase; letter-spacing: .6px;
+      color: var(--muted); margin: 18px 0 10px; }
+
+    .contacts-list { display: flex; flex-direction: column; gap: 8px; }
+    .contact-card {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: #fafbfc;
+    }
+    .contact-card .cname { font-weight: 600; font-size: .88rem; }
+    .contact-card .cphone { font-size: .8rem; color: var(--muted); font-family: monospace; }
+    .contact-card .crole { font-size: .73rem; background: #e8edf3; color: var(--brand);
+      padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .no-contacts { color: var(--muted); font-size: .85rem; padding: 12px 0; }
+
+    /* ── Sync panel ───────────────────────────── */
+    .sync-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .sync-panel label { font-size: .82rem; color: var(--muted); white-space: nowrap; }
+    .sync-panel input {
+      padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+      font-size: .85rem; width: 200px; font-family: monospace;
+    }
+    .sync-msg { font-size: .82rem; margin-left: auto; }
+    .sync-msg.ok    { color: var(--ok); }
+    .sync-msg.error { color: var(--danger); }
+
+    /* ── Loader ──────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 18px; height: 18px;
+      border: 2px solid #ccd;
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">AFS <span>Legal</span> &nbsp;·&nbsp; Case Dashboard</div>
+  <div class="wa-status">
+    <div class="dot" id="waDot"></div>
+    <span id="waLabel">Checking…</span>
+    <button class="btn btn-ghost" style="font-size:.78rem;padding:5px 10px" onclick="location.href='/wa/qr'" title="Open QR page">QR</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Stats -->
+  <div class="stats" id="statsRow">
+    <div class="stat-card ok">
+      <div class="label">Open Cases</div>
+      <div class="value" id="statOpen">—</div>
+    </div>
+    <div class="stat-card warn">
+      <div class="label">Hearing ≤ 7 Days</div>
+      <div class="value" id="statUpcoming">—</div>
+    </div>
+    <div class="stat-card danger">
+      <div class="label">Past / Stale Dates</div>
+      <div class="value" id="statStale">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Never Synced</div>
+      <div class="value" id="statNever">—</div>
+    </div>
+  </div>
+
+  <!-- Sync panel (admin) -->
+  <div class="sync-panel">
+    <label>Admin token</label>
+    <input type="password" id="adminToken" placeholder="paste token…" />
+    <button class="btn btn-primary" onclick="triggerSync()">Sync Today's Cases</button>
+    <button class="btn btn-ghost" onclick="loadAll()">Refresh</button>
+    <span class="sync-msg" id="syncMsg"></span>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <input type="search" id="searchBox" placeholder="Search CNR, title, court…" oninput="applyFilters()" />
+    <div class="filter-tabs">
+      <button class="active" data-filter="all"      onclick="setFilter('all',this)">All</button>
+      <button               data-filter="open"     onclick="setFilter('open',this)">Open</button>
+      <button               data-filter="upcoming" onclick="setFilter('upcoming',this)">This Week</button>
+      <button               data-filter="stale"    onclick="setFilter('stale',this)">Stale</button>
+      <button               data-filter="closed"   onclick="setFilter('closed',this)">Closed</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table id="casesTable">
+      <thead>
+        <tr>
+          <th>CNR</th>
+          <th>Case</th>
+          <th>Court</th>
+          <th>Next Hearing</th>
+          <th>Purpose</th>
+          <th>Status</th>
+          <th>Last Synced</th>
+        </tr>
+      </thead>
+      <tbody id="casesBody">
+        <tr class="empty-row"><td colspan="7"><span class="spinner"></span>&nbsp; Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</main>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modalBackdrop" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h2 id="modalTitle">Case Details</h2>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+  // ── Utilities ─────────────────────────────────────────────────────────────
+  const today = new Date().toISOString().split('T')[0];
+
+  function fmtDate(d) {
+    if (!d) return '—';
+    const dt = new Date(d + 'T00:00:00');
+    return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  function fmtDateRelative(d) {
+    if (!d) return { label: 'Not set', cls: 'date-none' };
+    if (d < today)  return { label: fmtDate(d) + ' ⚠', cls: 'date-past' };
+    const diffDays = Math.ceil((new Date(d) - new Date(today)) / 86400000);
+    if (diffDays <= 7) return { label: fmtDate(d) + ` (${diffDays}d)`, cls: 'date-week' };
+    return { label: fmtDate(d), cls: 'date-future' };
+  }
+
+  function fmtSynced(ts) {
+    if (!ts) return '<span style="color:var(--danger);font-size:.78rem">Never</span>';
+    const dt = new Date(ts);
+    const diff = Date.now() - dt;
+    if (diff < 3600000) return `${Math.round(diff/60000)}m ago`;
+    if (diff < 86400000) return `${Math.round(diff/3600000)}h ago`;
+    return dt.toLocaleDateString('en-IN', { day:'2-digit', month:'short' });
+  }
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let allCases = [];
+  let activeFilter = 'all';
+
+  // ── Load data ─────────────────────────────────────────────────────────────
+  async function loadStats() {
+    try {
+      const r = await fetch('/api/stats');
+      const s = await r.json();
+      document.getElementById('statOpen').textContent     = s.open_cases     ?? '—';
+      document.getElementById('statUpcoming').textContent = s.upcoming_7_days ?? '—';
+      document.getElementById('statStale').textContent    = s.stale_dates     ?? '—';
+      document.getElementById('statNever').textContent    = s.never_synced    ?? '—';
+    } catch(e) { /* non-critical */ }
+  }
+
+  async function loadAll() {
+    document.getElementById('casesBody').innerHTML =
+      '<tr class="empty-row"><td colspan="7"><span class="spinner"></span>&nbsp; Loading…</td></tr>';
+    try {
+      const r = await fetch('/cases');
+      const j = await r.json();
+      allCases = j.cases || [];
+      applyFilters();
+      loadStats();
+    } catch(e) {
+      document.getElementById('casesBody').innerHTML =
+        `<tr class="empty-row"><td colspan="7" style="color:var(--danger)">Failed to load: ${e.message}</td></tr>`;
+    }
+  }
+
+  async function loadWaStatus() {
+    try {
+      const r = await fetch('/wa/status');
+      const j = await r.json();
+      const connected = j.connected === true || j.status === 'connected';
+      document.getElementById('waDot').className   = 'dot ' + (connected ? 'connected' : 'disconnected');
+      document.getElementById('waLabel').textContent = connected ? 'WA Connected' : 'WA Disconnected';
+    } catch { /* ignore */ }
+  }
+
+  // ── Filter + render ───────────────────────────────────────────────────────
+  function setFilter(f, btn) {
+    activeFilter = f;
+    document.querySelectorAll('.filter-tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    applyFilters();
+  }
+
+  function applyFilters() {
+    const q = document.getElementById('searchBox').value.toLowerCase().trim();
+    const rows = allCases.filter(c => {
+      // text search
+      if (q && !`${c.cino} ${c.title||''} ${c.reference||''} ${c.court_name||''} ${c.case_type||''}`.toLowerCase().includes(q)) return false;
+      // tab filter
+      if (activeFilter === 'open')     return c.case_status === 'open';
+      if (activeFilter === 'closed')   return c.case_status !== 'open';
+      if (activeFilter === 'upcoming') return c.case_status === 'open' && c.next_hearing_date >= today &&
+                                              c.next_hearing_date <= new Date(Date.now()+7*86400000).toISOString().split('T')[0];
+      if (activeFilter === 'stale')    return c.case_status === 'open' && c.next_hearing_date && c.next_hearing_date < today;
+      return true;
+    });
+    renderTable(rows);
+  }
+
+  function renderTable(rows) {
+    const tbody = document.getElementById('casesBody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No cases match.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(c => {
+      const { label, cls } = fmtDateRelative(c.next_hearing_date);
+      const statusBadge = c.case_status === 'open'
+        ? '<span class="badge badge-open">Open</span>'
+        : '<span class="badge badge-closed">Closed</span>';
+      const title = c.title || c.reference || c.cino;
+      const sub   = c.case_type ? `<div class="case-sub">${c.case_type}</div>` : '';
+      return `<tr onclick="openCase('${c.cino}')">
+        <td><span class="cino-code">${c.cino}</span></td>
+        <td><div class="case-title">${esc(title)}</div>${sub}</td>
+        <td style="font-size:.82rem;color:var(--muted)">${esc(c.court_name||'—')}</td>
+        <td><span class="date-chip ${cls}">${label}</span></td>
+        <td style="font-size:.82rem;color:var(--muted)">${esc(c.purpose_name||'—')}</td>
+        <td>${statusBadge}</td>
+        <td style="font-size:.78rem;color:var(--muted)">${fmtSynced(c.last_synced_at)}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Case detail modal ─────────────────────────────────────────────────────
+  async function openCase(cino) {
+    document.getElementById('modalTitle').textContent = cino;
+    document.getElementById('modalBody').innerHTML = '<span class="spinner"></span> Loading…';
+    document.getElementById('modalBackdrop').classList.add('open');
+    document.body.style.overflow = 'hidden';
+
+    try {
+      const r = await fetch(`/cases/${cino}`);
+      const { case: c, contacts } = await r.json();
+      renderModal(c, contacts || []);
+    } catch(e) {
+      document.getElementById('modalBody').innerHTML = `<p style="color:var(--danger)">${e.message}</p>`;
+    }
+  }
+
+  function renderModal(c, contacts) {
+    const { label, cls } = fmtDateRelative(c.next_hearing_date);
+
+    const fields = [
+      ['CNR',           `<span class="mono">${c.cino}</span>`],
+      ['Reference',     c.reference || '—'],
+      ['Case Type',     c.case_type || '—'],
+      ['Status',        c.case_status === 'open'
+        ? '<span class="badge badge-open">Open</span>'
+        : '<span class="badge badge-closed">Closed</span>'],
+      ['Next Hearing',  `<span class="date-chip ${cls}" style="font-size:.82rem">${label}</span>`],
+      ['Purpose',       c.purpose_name || '—'],
+      ['Court',         c.court_name || '—'],
+      ['Stage',         c.stage_name || '—'],
+      ['Last Synced',   c.last_synced_at ? new Date(c.last_synced_at).toLocaleString('en-IN') : 'Never'],
+      ['Filed On',      c.filing_date ? fmtDate(c.filing_date) : '—'],
+    ];
+
+    const grid = fields.map(([k,v]) =>
+      `<div class="detail-item"><div class="key">${k}</div><div class="val">${v}</div></div>`
+    ).join('');
+
+    const parties = (() => {
+      const pet = (c.petitioners||[]).map(p => p.name||p).filter(Boolean).join(', ');
+      const res = (c.respondents||[]).map(p => p.name||p).filter(Boolean).join(', ');
+      if (!pet && !res) return '';
+      return `<div class="section-title">Parties</div>
+        <div style="font-size:.85rem;margin-bottom:4px"><strong>Petitioner:</strong> ${esc(pet||'—')}</div>
+        <div style="font-size:.85rem"><strong>Respondent:</strong> ${esc(res||'—')}</div>`;
+    })();
+
+    const contactsHtml = contacts.length ? contacts.map(ct => {
+      const name  = ct.client_contacts?.name  || '—';
+      const phone = ct.client_contacts?.phone_e164 || '—';
+      return `<div class="contact-card">
+        <div>
+          <div class="cname">${esc(name)}</div>
+          <div class="cphone">${esc(phone)}</div>
+        </div>
+        <span class="crole">${esc(ct.role||'subscriber')}</span>
+      </div>`;
+    }).join('') : '<div class="no-contacts">No contacts linked to this case.</div>';
+
+    document.getElementById('modalTitle').textContent = c.title || c.reference || c.cino;
+    document.getElementById('modalBody').innerHTML = `
+      <div class="detail-grid">${grid}</div>
+      ${parties}
+      <div class="section-title">Linked Contacts (${contacts.length})</div>
+      <div class="contacts-list">${contactsHtml}</div>`;
+  }
+
+  function closeModal(e) {
+    if (e && e.target !== document.getElementById('modalBackdrop')) return;
+    document.getElementById('modalBackdrop').classList.remove('open');
+    document.body.style.overflow = '';
+  }
+
+  // ── Admin sync ────────────────────────────────────────────────────────────
+  async function triggerSync() {
+    const token = document.getElementById('adminToken').value.trim();
+    if (!token) { showSyncMsg('Enter admin token first', 'error'); return; }
+    showSyncMsg('Triggering sync…', '');
+    try {
+      const r = await fetch('/sync/cases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify({})
+      });
+      const j = await r.json();
+      if (!r.ok) { showSyncMsg(j.error || 'Failed', 'error'); return; }
+      showSyncMsg(j.message || 'Sync started', 'ok');
+      setTimeout(loadAll, 4000);
+    } catch(e) { showSyncMsg(e.message, 'error'); }
+  }
+
+  function showSyncMsg(msg, type) {
+    const el = document.getElementById('syncMsg');
+    el.textContent = msg;
+    el.className = 'sync-msg ' + type;
+    if (type === 'ok') setTimeout(() => { if(el.textContent === msg) el.textContent = ''; }, 5000);
+  }
+
+  // ── Keyboard close ────────────────────────────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { document.getElementById('modalBackdrop').classList.remove('open'); document.body.style.overflow = ''; }
+  });
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  loadAll();
+  loadWaStatus();
+  setInterval(loadWaStatus, 30000);
+</script>
+</body>
+</html>

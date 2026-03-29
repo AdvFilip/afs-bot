@@ -16,6 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== ENV =====
 const DRY_RUN = String(process.env.DRY_RUN || "true").toLowerCase() === "true";
@@ -959,6 +960,33 @@ app.get('/cases', async (_req, res) => {
       .limit(200);
     if (error) throw error;
     return res.json({ cases: data || [] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/stats — summary counts for the dashboard
+app.get('/api/stats', async (_req, res) => {
+  try {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const in7Days  = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+
+    const [open, upcoming, stale, unsynced] = await Promise.all([
+      supabase.from('cases').select('cino', { count: 'exact', head: true }).eq('case_status', 'open'),
+      supabase.from('cases').select('cino', { count: 'exact', head: true })
+        .eq('case_status', 'open').gte('next_hearing_date', todayStr).lte('next_hearing_date', in7Days),
+      supabase.from('cases').select('cino', { count: 'exact', head: true })
+        .eq('case_status', 'open').not('next_hearing_date', 'is', null).lt('next_hearing_date', todayStr),
+      supabase.from('cases').select('cino', { count: 'exact', head: true })
+        .eq('case_status', 'open').is('last_synced_at', null),
+    ]);
+
+    return res.json({
+      open_cases:         open.count     ?? 0,
+      upcoming_7_days:    upcoming.count ?? 0,
+      stale_dates:        stale.count    ?? 0,
+      never_synced:       unsynced.count ?? 0,
+    });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
