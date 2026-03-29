@@ -403,7 +403,7 @@ async function handleInboundMessage(msg) {
     const jid = msg.key.remoteJid;
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us')) return;
 
-    const phoneE164 = `+${jid.replace('@s.whatsapp.net', '')}`;
+    const phoneE164 = `+${jid.split('@')[0]}`;
     const msgContent = msg.message || {};
 
     // Detect type and text
