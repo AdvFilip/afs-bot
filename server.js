@@ -516,6 +516,21 @@ async function handleInboundMessage(msg) {
 
     if (command !== 'UNKNOWN') {
       await executeCommand(command, args, contact.id, cmd.id, phoneE164, jid);
+    } else {
+      // Nothing recognised — give a helpful nudge
+      const looksLikeNumber = /^\d{8,}$/.test((messageText || '').trim());
+      if (looksLikeNumber) {
+        await sendWaText(jid,
+          `That looks like a case number, but CNR numbers start with your court code.\n\n` +
+          `Example: *TNTP050007832023*\n\n` +
+          `You can find your CNR in the eCourts app or on your case documents.\n` +
+          `Send the full CNR or reply *DETAILS* to search step by step.`);
+      } else {
+        await sendWaText(jid,
+          `Send your *CNR number* to subscribe to hearing reminders\n` +
+          `(e.g. *TNTP0XXXXXXXXXX*)\n\n` +
+          `Reply *STOP* to unsubscribe.`);
+      }
     }
 
   } catch (err) {
@@ -1209,7 +1224,7 @@ async function sendWelcome(jid) {
     `*To subscribe, do one of the following:*\n` +
     `• Send your *CNR number* directly\n` +
     `  (e.g. *TNTP0XXXXXXXXXX*)\n` +
-    `• Or *scan the QR code* on your case file / eCourts app\n\n` +
+    `• Open the *eCourts app* → your case → tap *Share* → paste the link here\n\n` +
     `Reply *STOP* at any time to unsubscribe.`);
 }
 
