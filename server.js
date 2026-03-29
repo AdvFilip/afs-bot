@@ -1205,11 +1205,11 @@ async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
 async function sendWelcome(jid) {
   await sendWaText(jid,
     `⚖️ Welcome to *AFS Legal* onboarding!\n\n` +
-    `I'll send you WhatsApp reminders before each court hearing.\n\n` +
+    `We'll send you WhatsApp reminders before each court hearing.\n\n` +
     `*To subscribe, do one of the following:*\n` +
     `• Send your *CNR number* directly\n` +
-    `  (e.g. *TNTP050007832023*)\n` +
-    `• Or reply *DETAILS* to find your case step by step\n\n` +
+    `  (e.g. *TNTP0XXXXXXXXXX*)\n` +
+    `• Or *scan the QR code* on your case file / eCourts app\n\n` +
     `Reply *STOP* at any time to unsubscribe.`);
 }
 
