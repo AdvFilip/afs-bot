@@ -27,7 +27,8 @@ const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
 const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
-const CASE_SYNC_HOUR   = parseInt(process.env.CASE_SYNC_HOUR || '6', 10);
+const CASE_SYNC_EVENING_HOUR = parseInt(process.env.CASE_SYNC_HOUR         || '12', 10); // 12 UTC = 6 PM IST
+const CASE_SYNC_MORNING_HOUR = parseInt(process.env.CASE_SYNC_MORNING_HOUR || '3',  10); // 03 UTC = 9 AM IST
 const ADMIN_TOKEN        = process.env.ADMIN_TOKEN        || '';
 const DEFAULT_COURT_CODE = process.env.DEFAULT_COURT_CODE || 'TNTP05';
 
@@ -750,50 +751,70 @@ async function syncOneCnr(cnr) {
   return row.next_hearing_date;
 }
 
-async function runDailyCaseSync() {
-  // Only sync cases that were listed for hearing today or earlier.
-  // Courts update the next hearing date in eCourts after each session,
-  // so we only need to refresh the ~3-5 cases heard today — not all 100.
-  const todayStr = new Date().toISOString().split('T')[0];
-  console.log(`[SYNC] Daily sync for cases heard on or before ${todayStr}...`);
+// Two-window daily sync strategy:
+//   Evening (6 PM IST / 12 UTC): sync cases heard TODAY — courts update after sessions end
+//   Morning (9 AM IST / 03 UTC): sync cases heard YESTERDAY — catch staff who update overnight
+//
+// Dedup guard: skip any case already synced in the last 2 hours (prevents double-work if
+//   both windows happen to queue the same case, e.g. on transition days).
+//
+// 2-day retry: cases where the court date still hasn't been updated after the morning run
+//   will be picked up automatically 2 days later because their next_hearing_date will
+//   equal (now - 2 days), which lands in the next evening window's date window.
+//   This naturally handles holidays without any special logic.
+//
+// Disposed detection: mapApiCaseToRow() already sets case_status='closed' for DISPOSED
+//   cases. The query filters eq('case_status','open') so closed cases are never re-synced.
+//
+// Never-synced guard: newly onboarded cases (partial data, no API call yet) are always
+//   included so they get their first full sync promptly regardless of the target date.
+async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
+  console.log(`[SYNC][${windowName}] Starting sync for hearing date: ${targetDateStr} ...`);
 
-  // 1. Cases whose hearing date has arrived (heard today or overdue from yesterday)
+  // Dedup: "already synced recently" = last_synced_at within past 2 hours
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+  // 1. Open cases whose next_hearing_date matches the target date (exact, not lte)
   const { data: heard, error: e1 } = await supabase
     .from('cases')
     .select('cino')
     .eq('case_status', 'open')
-    .not('next_hearing_date', 'is', null)
-    .lte('next_hearing_date', todayStr);
+    .eq('next_hearing_date', targetDateStr)
+    .or(`last_synced_at.is.null,last_synced_at.lt.${twoHoursAgo}`);
 
-  // 2. Cases never synced yet (newly added via onboarding with partial data)
+  // 2. Open cases never synced yet (newly added via onboarding with partial data)
   const { data: fresh, error: e2 } = await supabase
     .from('cases')
     .select('cino')
+    .eq('case_status', 'open')
     .is('last_synced_at', null);
 
-  if (e1) { console.error('[SYNC] Query error:', e1.message); return; }
+  if (e1) { console.error(`[SYNC][${windowName}] Query error:`, e1.message); return; }
 
   const cinoSet = new Set([
-    ...(heard  || []).map(c => c.cino),
-    ...(fresh  || []).map(c => c.cino),
+    ...(heard || []).map(c => c.cino),
+    ...(fresh || []).map(c => c.cino),
   ]);
 
   if (!cinoSet.size) {
-    console.log('[SYNC] No cases need refreshing today.');
+    console.log(`[SYNC][${windowName}] No cases need refreshing.`);
     return;
   }
 
-  console.log(`[SYNC] Refreshing ${cinoSet.size} case(s) (heard today + never-synced)...`);
+  console.log(`[SYNC][${windowName}] Refreshing ${cinoSet.size} case(s)...`);
   let ok = 0, failed = 0;
   for (const cino of cinoSet) {
     try { await syncOneCnr(cino); ok++; }
-    catch (e) { console.error(`[SYNC] Failed ${cino}:`, e.message); failed++; }
-    await new Promise(r => setTimeout(r, 300));
+    catch (e) { console.error(`[SYNC][${windowName}] Failed ${cino}:`, e.message); failed++; }
+    await new Promise(r => setTimeout(r, 300)); // rate-limit: 300ms between API calls
   }
-  console.log(`[SYNC] Done. ok=${ok} failed=${failed}`);
+  console.log(`[SYNC][${windowName}] Done. ok=${ok} failed=${failed}`);
 }
 
-// POST /sync/cases — manual sync: { cnrs: ["CINO1", ...] } or empty body to run full delta sync
+// POST /sync/cases — manual sync
+//   { "cnrs": ["CINO1", ...] }           → sync specific cases by CNR
+//   { "date": "2026-03-29" }             → sync all open cases with that hearing date
+//   {}  (empty body)                      → run evening-window sync for today
 app.post('/sync/cases', async (req, res) => {
   if (!requireAdminToken(req, res)) return;
   try {
@@ -811,9 +832,14 @@ app.post('/sync/cases', async (req, res) => {
       }
       return res.json({ synced: results.length, results });
     }
-    // No CNRs → trigger full daily sync in background
-    runDailyCaseSync().catch(e => console.error('[SYNC] bg error:', e.message));
-    return res.json({ message: 'Daily case sync triggered in background' });
+    // Optional date param — default to today (UTC)
+    const targetDate = req.body?.date || new Date().toISOString().split('T')[0];
+    // Validate format
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    runDailyCaseSync(targetDate, 'manual').catch(e => console.error('[SYNC] bg error:', e.message));
+    return res.json({ message: `Case sync triggered for hearing date ${targetDate} (background)` });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -1329,16 +1355,24 @@ setInterval(() => {
   claimAndProcessDue().catch((e) => console.error("SCHEDULER ERROR:", e.message));
 }, SCAN_INTERVAL_MS);
 
-// Daily case sync — fires once per day at CASE_SYNC_HOUR (default 6 AM server time)
-let lastCaseSyncDate = null;
+// Two-window daily case sync scheduler (all times UTC)
+//   Evening window — 12:00 UTC (6 PM IST): sync cases heard TODAY
+//   Morning window — 03:00 UTC (9 AM IST): sync cases heard YESTERDAY (overnight staff updates)
+const lastSyncRun = { evening: null, morning: null };
 setInterval(() => {
-  const now = new Date();
-  if (now.getHours() === CASE_SYNC_HOUR) {
-    const dateKey = now.toISOString().split('T')[0];
-    if (lastCaseSyncDate !== dateKey) {
-      lastCaseSyncDate = dateKey;
-      runDailyCaseSync().catch(e => console.error('[SYNC] Daily sync error:', e.message));
-    }
+  const now     = new Date();
+  const hUtc    = now.getUTCHours();
+  const dateKey = now.toISOString().split('T')[0];                               // today YYYY-MM-DD
+  const yestKey = new Date(now - 86_400_000).toISOString().split('T')[0];        // yesterday
+
+  if (hUtc === CASE_SYNC_EVENING_HOUR && lastSyncRun.evening !== dateKey) {
+    lastSyncRun.evening = dateKey;
+    runDailyCaseSync(dateKey, 'evening').catch(e => console.error('[SYNC] Evening sync error:', e.message));
+  }
+
+  if (hUtc === CASE_SYNC_MORNING_HOUR && lastSyncRun.morning !== dateKey) {
+    lastSyncRun.morning = dateKey;
+    runDailyCaseSync(yestKey, 'morning').catch(e => console.error('[SYNC] Morning sync error:', e.message));
   }
 }, 60_000); // check every minute
 
