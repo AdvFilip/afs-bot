@@ -306,8 +306,8 @@ function parseCommand(text) {
 }
 
 // ===== Inbound: Command Executor =====
-async function executeCommand(command, args, contactId, cmdId, phoneE164) {
-  const jid = normalizeToWaJid(phoneE164);
+async function executeCommand(command, args, contactId, cmdId, phoneE164, replyJid) {
+  const jid = replyJid || normalizeToWaJid(phoneE164);
   let replyText = null;
   let executionNote = null;
 
@@ -481,7 +481,7 @@ async function handleInboundMessage(msg) {
 
     // 6. Execute (skip UNKNOWN)
     if (command !== 'UNKNOWN') {
-      await executeCommand(command, args, contact.id, cmd.id, phoneE164);
+      await executeCommand(command, args, contact.id, cmd.id, phoneE164, jid);
     }
 
   } catch (err) {
