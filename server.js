@@ -654,54 +654,67 @@ function mapApiCaseToRow(d) {
   };
 }
 
-// Compute reminder time: 9 AM IST (03:30 UTC) on the day before the hearing
-function reminderTimeForHearing(hearingDateStr) {
-  const hearingUtcMidnight = new Date(hearingDateStr + 'T00:00:00Z');
-  // Subtract 20.5 hours: gets us to previous day 03:30 UTC = 09:00 IST
-  return new Date(hearingUtcMidnight.getTime() - (20.5 * 60 * 60 * 1000));
-}
 
-async function scheduleReminderForContact(cino, caseRow, phone, name) {
+// Tiered reminders: T-7, T-3, T-1 days before the hearing at 9 AM IST (03:30 UTC)
+const REMINDER_TIERS = [
+  { daysBefore: 7, tag: 'T-7', label: 'in 7 days' },
+  { daysBefore: 3, tag: 'T-3', label: 'in 3 days' },
+  { daysBefore: 1, tag: 'T-1', label: 'tomorrow'  },
+];
+
+async function scheduleRemindersForContact(cino, caseRow, phone, name) {
   if (!caseRow.next_hearing_date) return;
-  const reminderAt = reminderTimeForHearing(caseRow.next_hearing_date);
-  if (reminderAt <= new Date()) return; // already past
 
-  // Cancel any existing pending/retrying reminder for this case+contact
+  const hearingUtc = new Date(caseRow.next_hearing_date + 'T00:00:00Z');
+  const now        = new Date();
+  const caseRef    = caseRow.reference || cino;
+  const caseTitle  = caseRow.title     || caseRef;
+  const courtLine  = caseRow.court_name   ? `Court: ${caseRow.court_name}`     : null;
+  const stageLine  = caseRow.purpose_name ? `Stage: ${caseRow.purpose_name}`   : null;
+  const dateLine   = `Hearing Date: ${formatDateIST(caseRow.next_hearing_date)}`;
+
+  // Cancel all existing pending/retrying reminders for this case+contact
   await supabase.from('reminders')
     .update({ status: 'failed', last_error_message: 'Superseded by updated hearing date' })
     .eq('user_phone_e164', phone)
     .eq('case_cino', cino)
     .in('status', ['pending', 'retrying']);
 
-  const caseRef  = caseRow.reference || cino;
-  const caseTitle = caseRow.title || caseRef;
-  const message = [
-    '⚖️ AFS Legal – Hearing Reminder',
-    '',
-    `Your case is scheduled for hearing tomorrow.`,
-    `Case: ${caseRef}`,
-    caseTitle,
-    caseRow.court_name ? `Court: ${caseRow.court_name}` : null,
-    caseRow.purpose_name ? `Purpose: ${caseRow.purpose_name}` : null,
-    '',
-    'Reply DONE once the hearing is over, or SNOOZE to delay this reminder.',
-  ].filter(l => l !== null).join('\n');
+  let created = 0;
+  for (const { daysBefore, tag, label } of REMINDER_TIERS) {
+    // 9 AM IST = 3.5h UTC offset; reminderAt = hearing midnight UTC − daysBefore days + 3.5h
+    const reminderAt = new Date(hearingUtc.getTime() - daysBefore * 86400000 + 3.5 * 3600000);
+    if (reminderAt <= now) continue; // already past — skip this tier
 
-  const { error: rErr } = await supabase.from('reminders').insert({
-    title:            `Hearing tomorrow: ${caseRef}`,
-    message,
-    user_phone_e164:  phone,
-    user_name:        name ?? null,
-    user_timezone:    'Asia/Kolkata',
-    scheduled_at_utc: reminderAt.toISOString(),
-    status:           'pending',
-    attempt_count:    0,
-    max_attempts:     5,
-    provider:         PRIMARY_PROVIDER,
-    case_cino:        cino,
-  });
-  if (rErr) console.error(`[SYNC] Reminder insert error for ${phone}:`, rErr.message);
-  else console.log(`[SYNC] Reminder → ${phone} at ${reminderAt.toISOString()} (${caseRow.next_hearing_date})`);
+    const isLastDay = daysBefore === 1;
+    const message = [
+      `⚖️ AFS Legal – Hearing Reminder (${tag})`,
+      '',
+      `Your case is listed for hearing *${label}*.`,
+      `Case: ${caseRef}`,
+      caseTitle,
+      courtLine, stageLine, dateLine,
+      isLastDay ? '' : null,
+      isLastDay ? 'Reply DONE once the hearing is over, or SNOOZE to delay.' : null,
+    ].filter(l => l !== null).join('\n');
+
+    const { error } = await supabase.from('reminders').insert({
+      title:            `${tag} Hearing reminder: ${caseRef}`,
+      message,
+      user_phone_e164:  phone,
+      user_name:        name ?? null,
+      user_timezone:    'Asia/Kolkata',
+      scheduled_at_utc: reminderAt.toISOString(),
+      status:           'pending',
+      attempt_count:    0,
+      max_attempts:     5,
+      provider:         PRIMARY_PROVIDER,
+      case_cino:        cino,
+    });
+    if (error) console.error(`[SYNC] ${tag} reminder error for ${phone}:`, error.message);
+    else { console.log(`[SYNC] ${tag} reminder → ${phone} at ${reminderAt.toISOString()}`); created++; }
+  }
+  if (!created) console.log(`[SYNC] No future reminder tiers for ${phone} / ${cino} (all past)`);
 }
 
 async function upsertCaseAndScheduleReminders(row, previousNextHearing) {
@@ -720,7 +733,7 @@ async function upsertCaseAndScheduleReminders(row, previousNextHearing) {
   for (const cc of contacts) {
     const phone = cc.client_contacts?.phone_e164;
     if (!phone) continue;
-    await scheduleReminderForContact(row.cino, row, phone, cc.client_contacts?.name);
+    await scheduleRemindersForContact(row.cino, row, phone, cc.client_contacts?.name);
   }
 }
 
@@ -738,47 +751,46 @@ async function syncOneCnr(cnr) {
 }
 
 async function runDailyCaseSync() {
-  console.log('[SYNC] Daily case sync starting...');
+  // Only sync cases that were listed for hearing today or earlier.
+  // Courts update the next hearing date in eCourts after each session,
+  // so we only need to refresh the ~3-5 cases heard today — not all 100.
+  const todayStr = new Date().toISOString().split('T')[0];
+  console.log(`[SYNC] Daily sync for cases heard on or before ${todayStr}...`);
 
-  // Tiered sync strategy — minimises CASE_DETAIL API calls (1.5 credits each):
-  //   Hearing ≤ 7 days away  → sync daily          (needs fresh data urgently)
-  //   Hearing 8–30 days away → sync every 3 days
-  //   Hearing > 30 days / unknown → sync weekly
-  //   Hearing already past    → always sync (catch rescheduled dates)
-  const now        = new Date();
-  const todayStr   = now.toISOString().split('T')[0];
-  const in7d       = new Date(now.getTime() +  7 * 86400000).toISOString().split('T')[0];
-  const in30d      = new Date(now.getTime() + 30 * 86400000).toISOString().split('T')[0];
-  const ago1d      = new Date(now.getTime() -  1 * 86400000).toISOString();
-  const ago3d      = new Date(now.getTime() -  3 * 86400000).toISOString();
-  const ago7d      = new Date(now.getTime() -  7 * 86400000).toISOString();
-
-  const { data: allOpen, error } = await supabase
+  // 1. Cases whose hearing date has arrived (heard today or overdue from yesterday)
+  const { data: heard, error: e1 } = await supabase
     .from('cases')
-    .select('cino, next_hearing_date, last_synced_at')
-    .eq('case_status', 'open');
+    .select('cino')
+    .eq('case_status', 'open')
+    .not('next_hearing_date', 'is', null)
+    .lte('next_hearing_date', todayStr);
 
-  if (error) { console.error('[SYNC] Query error:', error.message); return; }
-  if (!allOpen?.length) { console.log('[SYNC] No open cases.'); return; }
+  // 2. Cases never synced yet (newly added via onboarding with partial data)
+  const { data: fresh, error: e2 } = await supabase
+    .from('cases')
+    .select('cino')
+    .is('last_synced_at', null);
 
-  const toSync = allOpen.filter(({ next_hearing_date: h, last_synced_at: s }) => {
-    if (!s) return true;                          // never synced → always sync
-    if (!h || h < todayStr) return s < ago1d;     // past/unknown → daily
-    if (h <= in7d)          return s < ago1d;     // ≤7 days      → daily
-    if (h <= in30d)         return s < ago3d;     // 8–30 days    → every 3 days
-    return s < ago7d;                             // >30 days     → weekly
-  });
+  if (e1) { console.error('[SYNC] Query error:', e1.message); return; }
 
-  if (!toSync.length) { console.log('[SYNC] All cases up to date.'); return; }
-  console.log(`[SYNC] ${toSync.length}/${allOpen.length} case(s) due for refresh...`);
+  const cinoSet = new Set([
+    ...(heard  || []).map(c => c.cino),
+    ...(fresh  || []).map(c => c.cino),
+  ]);
 
+  if (!cinoSet.size) {
+    console.log('[SYNC] No cases need refreshing today.');
+    return;
+  }
+
+  console.log(`[SYNC] Refreshing ${cinoSet.size} case(s) (heard today + never-synced)...`);
   let ok = 0, failed = 0;
-  for (const { cino } of toSync) {
+  for (const cino of cinoSet) {
     try { await syncOneCnr(cino); ok++; }
     catch (e) { console.error(`[SYNC] Failed ${cino}:`, e.message); failed++; }
     await new Promise(r => setTimeout(r, 300));
   }
-  console.log(`[SYNC] Done. ok=${ok} failed=${failed} skipped=${allOpen.length - toSync.length}`);
+  console.log(`[SYNC] Done. ok=${ok} failed=${failed}`);
 }
 
 // POST /sync/cases — manual sync: { cnrs: ["CINO1", ...] } or empty body to run full delta sync
@@ -892,7 +904,7 @@ app.post('/cases/:cino/contact', async (req, res) => {
     if (linkErr) throw linkErr;
 
     // Schedule reminder immediately if case has a future hearing
-    await scheduleReminderForContact(cino, caseRow, phone_e164, contact.name);
+    await scheduleRemindersForContact(cino, caseRow, phone_e164, contact.name);
 
     return res.json({ message: 'Contact linked to case', cino, phone_e164, contact_id: contact.id });
   } catch (err) {
@@ -1039,7 +1051,7 @@ async function linkContactToCase(cino, phoneE164, contactId) {
   const { data: caseRow } = await supabase.from('cases').select('*').eq('cino', cino).maybeSingle();
   if (caseRow) {
     const { data: cc } = await supabase.from('client_contacts').select('name').eq('id', contactId).maybeSingle();
-    await scheduleReminderForContact(cino, caseRow, phoneE164, cc?.name ?? null);
+    await scheduleRemindersForContact(cino, caseRow, phoneE164, cc?.name ?? null);
   }
   return caseRow;
 }
