@@ -324,7 +324,7 @@ async function executeCommand(command, args, contactId, cmdId, phoneE164, replyJ
         { client_contact_id: contactId, opt_status: 'opted_out', whatsapp_enabled: false, last_opt_change_at: nowIso(), updated_at: nowIso() },
         { onConflict: 'client_contact_id' }
       );
-      replyText = 'You have been unsubscribed from AFS Legal reminders. Reply START to re-subscribe.';
+      replyText = 'You have been unsubscribed from AFS Legal reminders. Reply *START* to re-subscribe.';
       executionNote = 'opted_out';
 
     } else if (command === 'DONE') {
@@ -499,8 +499,8 @@ async function handleInboundMessage(msg) {
         await sendWelcome(jid);
         return;
       }
-      // 5d. REGISTER trigger → step-by-step case search
-      if (['REGISTER', 'ADD', 'SUBSCRIBE', 'START'].includes(upperText)) {
+      // 5d. DETAILS / REGISTER trigger → step-by-step case search
+      if (['DETAILS', 'REGISTER', 'ADD', 'SUBSCRIBE', 'START'].includes(upperText)) {
         await startOnboarding(phoneE164, jid);
         return;
       }
@@ -1185,39 +1185,40 @@ async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
     if (!apiData) {
       await sendWaText(jid,
         `❌ No case found for CNR *${cnr}*.\n\n` +
-        `Please check the number and try again, or reply *REGISTER* to search step by step.`);
+        `Please check the number and try again, or reply *DETAILS* to search step by step.`);
       return;
     }
     const preview = formatCasePreview(apiData, apiData.caseNumber);
     await upsertSession(phoneE164, 'confirm', { cnr_path: true }, cnr, apiData);
     await sendWaText(jid,
-      `Found your case:\n\n${preview}\n\n` +
-      `Reply *YES* to subscribe to hearing reminders, or *NO* to cancel.`);
+      `✅ Found your case:\n\n${preview}\n\n` +
+      `Reply *YES* to subscribe to hearing reminders.\nReply *NO* to cancel.`);
   } catch (e) {
     console.error('[CNR LOOKUP]', e.message);
     await sendWaText(jid,
       `❌ Could not fetch case details right now. Please try again later.\n\n` +
-      `Or reply *REGISTER* to search step by step.`);
+      `Or reply *DETAILS* to search step by step.`);
   }
 }
 
 // Greeting → welcome message (does NOT start step-by-step flow)
 async function sendWelcome(jid) {
   await sendWaText(jid,
-    `Welcome to *AFS Legal* hearing reminders! ⚖️\n\n` +
-    `I can send you a WhatsApp reminder before each court hearing.\n\n` +
-    `*How to register your case:*\n` +
-    `• Send your *CNR number* directly (e.g. TNTP050007832023)\n` +
-    `• Or reply *REGISTER* to find your case step by step\n\n` +
+    `⚖️ Welcome to *AFS Legal* onboarding!\n\n` +
+    `I'll send you WhatsApp reminders before each court hearing.\n\n` +
+    `*To subscribe, do one of the following:*\n` +
+    `• Send your *CNR number* directly\n` +
+    `  (e.g. *TNTP050007832023*)\n` +
+    `• Or reply *DETAILS* to find your case step by step\n\n` +
     `Reply *STOP* at any time to unsubscribe.`);
 }
 
-// REGISTER → step-by-step case lookup (3 questions)
+// DETAILS → step-by-step case lookup (3 questions)
 async function startOnboarding(phoneE164, jid) {
   await clearSession(phoneE164);
   await upsertSession(phoneE164, 'case_type', {});
   await sendWaText(jid,
-    `Let's find your case. I'll ask 3 quick questions.\n\n` +
+    `Let's find your case — I'll ask 3 quick questions.\n\n` +
     `*Step 1 / 3 — Case Type*\n` +
     `Reply with your case type code:\n` +
     `  *OS* – Original Suit\n` +
@@ -1237,7 +1238,7 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
 
   if (upper === 'CANCEL') {
     await clearSession(phoneE164);
-    await sendWaText(jid, 'Cancelled. Reply *REGISTER* to start again.');
+    await sendWaText(jid, 'Cancelled. Reply *DETAILS* to start again.');
     return;
   }
 
@@ -1267,7 +1268,7 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
     if (!results.length) {
       await sendWaText(jid,
         `❌ No case found for *${data.case_type} ${data.case_number}/${year}*.\n\n` +
-        `Please check your details and reply *REGISTER* to try again.`);
+        `Please check your details and reply *DETAILS* to try again.`);
       await clearSession(phoneE164);
       return;
     }
@@ -1275,14 +1276,14 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
     const preview = formatCasePreview(match, `${data.case_type} ${data.case_number}/${year}`);
     await upsertSession(phoneE164, 'confirm', { ...data, year }, match.cnr, match);
     await sendWaText(jid,
-      `Found your case:\n\n${preview}\n\n` +
-      `Reply *YES* to subscribe to hearing reminders, or *NO* to cancel.`);
+      `✅ Found your case:\n\n${preview}\n\n` +
+      `Reply *YES* to subscribe to hearing reminders.\nReply *NO* to cancel.`);
 
   } else if (session.step === 'confirm') {
     if (upper === 'YES') {
       const cino = session.candidate_cino;
       if (!cino) {
-        await sendWaText(jid, 'Something went wrong. Reply *REGISTER* to start again.');
+        await sendWaText(jid, 'Something went wrong. Reply *DETAILS* to start again.');
         await clearSession(phoneE164);
         return;
       }
@@ -1337,7 +1338,7 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
       await clearSession(phoneE164);
 
     } else if (upper === 'NO' || upper === 'CANCEL') {
-      await sendWaText(jid, 'Cancelled. Reply *REGISTER* to try with different details.');
+      await sendWaText(jid, 'Cancelled. Reply *DETAILS* to try with different details.');
       await clearSession(phoneE164);
     } else {
       await sendWaText(jid, 'Please reply *YES* to confirm or *NO* to cancel.');
