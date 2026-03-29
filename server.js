@@ -751,38 +751,49 @@ async function syncOneCnr(cnr) {
   return row.next_hearing_date;
 }
 
-// Two-window daily sync strategy:
-//   Evening (6 PM IST / 12 UTC): sync cases heard TODAY — courts update after sessions end
-//   Morning (9 AM IST / 03 UTC): sync cases heard YESTERDAY — catch staff who update overnight
+// Two-window daily sync strategy — credits only spent when DB has stale past dates:
 //
-// Dedup guard: skip any case already synced in the last 2 hours (prevents double-work if
-//   both windows happen to queue the same case, e.g. on transition days).
+//   Evening (6 PM IST / 12 UTC): sync all open cases where next_hearing_date <= today
+//     Courts post results after sessions end. We refresh only cases whose hearing date
+//     has arrived or passed — typically 3–5 cases per day for a small firm.
 //
-// 2-day retry: cases where the court date still hasn't been updated after the morning run
-//   will be picked up automatically 2 days later because their next_hearing_date will
-//   equal (now - 2 days), which lands in the next evening window's date window.
-//   This naturally handles holidays without any special logic.
+//   Morning (9 AM IST / 03 UTC): sync all open cases where next_hearing_date <= yesterday
+//     Catches staff who enter the next hearing date the following morning.
 //
-// Disposed detection: mapApiCaseToRow() already sets case_status='closed' for DISPOSED
-//   cases. The query filters eq('case_status','open') so closed cases are never re-synced.
+// 48-hour dedup guard (2-day natural retry):
+//   Once a case is synced, it is not re-synced for 48 hours regardless of whether
+//   the court updated the date. If the API still returns the old past date after the
+//   evening run, the morning run skips it (~15 h gap). It is retried two days later
+//   when the 48-hour window expires. Holidays are handled automatically — no special
+//   logic needed.
 //
-// Never-synced guard: newly onboarded cases (partial data, no API call yet) are always
-//   included so they get their first full sync promptly regardless of the target date.
+// Zero waste rule:
+//   - Closed / disposed cases: excluded by case_status = 'open' filter.
+//     mapApiCaseToRow() auto-sets case_status='closed' on DISPOSED so they drop
+//     out of future runs the moment they are synced once.
+//   - Future dates: cases with next_hearing_date > targetDateStr are never touched.
+//   - Already synced today: 48-hour window prevents double-billing in same window.
+//
+// Never-synced guard:
+//   Newly onboarded cases may have next_hearing_date=NULL (partial search data).
+//   They are always included in the first run so they get a full CASE_DETAIL fetch.
 async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
-  console.log(`[SYNC][${windowName}] Starting sync for hearing date: ${targetDateStr} ...`);
+  console.log(`[SYNC][${windowName}] Checking for open cases with past hearing date <= ${targetDateStr} ...`);
 
-  // Dedup: "already synced recently" = last_synced_at within past 2 hours
-  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  // 48-hour cooldown — prevents re-burning credits on a case synced in the last 2 days
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-  // 1. Open cases whose next_hearing_date matches the target date (exact, not lte)
-  const { data: heard, error: e1 } = await supabase
+  // 1. Open cases whose hearing date has arrived or is overdue (lte, not eq)
+  //    AND not synced in the last 48 hours
+  const { data: stale, error: e1 } = await supabase
     .from('cases')
     .select('cino')
     .eq('case_status', 'open')
-    .eq('next_hearing_date', targetDateStr)
-    .or(`last_synced_at.is.null,last_synced_at.lt.${twoHoursAgo}`);
+    .not('next_hearing_date', 'is', null)
+    .lte('next_hearing_date', targetDateStr)
+    .or(`last_synced_at.is.null,last_synced_at.lt.${fortyEightHoursAgo}`);
 
-  // 2. Open cases never synced yet (newly added via onboarding with partial data)
+  // 2. Open cases never synced yet — could have next_hearing_date=null (partial data)
   const { data: fresh, error: e2 } = await supabase
     .from('cases')
     .select('cino')
@@ -792,16 +803,16 @@ async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
   if (e1) { console.error(`[SYNC][${windowName}] Query error:`, e1.message); return; }
 
   const cinoSet = new Set([
-    ...(heard || []).map(c => c.cino),
+    ...(stale || []).map(c => c.cino),
     ...(fresh || []).map(c => c.cino),
   ]);
 
   if (!cinoSet.size) {
-    console.log(`[SYNC][${windowName}] No cases need refreshing.`);
+    console.log(`[SYNC][${windowName}] No stale cases — DB is current, no credits used.`);
     return;
   }
 
-  console.log(`[SYNC][${windowName}] Refreshing ${cinoSet.size} case(s)...`);
+  console.log(`[SYNC][${windowName}] Refreshing ${cinoSet.size} case(s) with past/unsynced dates...`);
   let ok = 0, failed = 0;
   for (const cino of cinoSet) {
     try { await syncOneCnr(cino); ok++; }
