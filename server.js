@@ -412,33 +412,45 @@ async function handleImageQr(msg, phoneE164, jid, contactId) {
     const { Jimp } = require('jimp');
     const jsQR     = require('jsqr');
 
-    const buffer = await downloadMediaMessage(msg, 'buffer', {});
+    // Pass waSock for media re-upload fallback (handles expired media URLs)
+    const buffer = await downloadMediaMessage(
+      msg, 'buffer', {},
+      { reuploadRequest: waSock?.updateMediaMessage }
+    );
     const image  = await Jimp.fromBuffer(buffer);
 
     // jsQR needs flat RGBA Uint8ClampedArray
     const { data, width, height } = image.bitmap;
     const code = jsQR(new Uint8ClampedArray(data), width, height, {
-      inversionAttempts: 'dontInvert',
+      inversionAttempts: 'attemptBoth',   // try inverted too (dark bg QR codes)
     });
 
     if (!code) {
-      await sendWaText(jid,
-        `❌ Couldn't read the QR code.\n\n` +
-        `For a clear scan:\n` +
-        `• Make sure the full QR code is in frame\n` +
-        `• Use good lighting — no glare or shadows\n` +
-        `• Hold the camera steady and close\n\n` +
-        `Or type your *CNR number* directly (e.g. *TNTP0XXXXXXXXXX*).`);
+      await sendWaButtons(jid,
+        `❌ Couldn't read the QR code from that image.\n\n` +
+        `Tips for a clear scan:\n` +
+        `• Frame the QR code fully — no cropping\n` +
+        `• Good lighting, no glare or shadows\n` +
+        `• Hold steady and close to the code`,
+        [
+          { id: 'DETAILS', label: '🔍 Search by Case Details Instead' },
+        ],
+        'Or type your CNR number directly'
+      );
       return;
     }
 
     console.log(`[IMAGE QR] Decoded: ${code.data.slice(0, 80)}`);
     const cnr = extractCnr(code.data);
     if (!cnr) {
-      await sendWaText(jid,
-        `QR code read, but no CNR number found in it.\n\n` +
-        `Decoded content: _${code.data.slice(0, 120)}_\n\n` +
-        `Please scan the QR code from your *eCourts case page*, or type the CNR directly.`);
+      await sendWaButtons(jid,
+        `QR code scanned, but it doesn't contain a CNR number.\n\n` +
+        `Please use the QR code from your *eCourts case page*, not a generic QR.`,
+        [
+          { id: 'DETAILS', label: '🔍 Search by Case Details Instead' },
+        ],
+        `Decoded: ${code.data.slice(0, 60)}`
+      );
       return;
     }
 
@@ -447,8 +459,11 @@ async function handleImageQr(msg, phoneE164, jid, contactId) {
 
   } catch (e) {
     console.error('[IMAGE QR ERROR]', e.message);
-    await sendWaText(jid,
-      `❌ Could not process the image. Please send a clearer photo, or type your CNR number directly.`);
+    await sendWaButtons(jid,
+      `❌ Could not process that image. Please send a clearer photo of the QR code.`,
+      [{ id: 'DETAILS', label: '🔍 Search by Case Details Instead' }],
+      'Or type your CNR number directly'
+    );
   }
 }
 
@@ -460,7 +475,14 @@ async function handleInboundMessage(msg) {
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@g.us')) return;
 
     const phoneE164 = `+${jid.split('@')[0]}`;
-    const msgContent = msg.message || {};
+    const rawContent = msg.message || {};
+
+    // Unwrap ephemeral / view-once containers so media detection works for all share methods
+    const msgContent =
+      rawContent.ephemeralMessage?.message  ||
+      rawContent.viewOnceMessage?.message   ||
+      rawContent.viewOnceMessageV2?.message ||
+      rawContent;
 
     // Detect type and text
     let messageType = 'unknown';
@@ -470,7 +492,10 @@ async function handleInboundMessage(msg) {
     } else if (msgContent.extendedTextMessage?.text) {
       messageType = 'text'; messageText = msgContent.extendedTextMessage.text;
     } else if (msgContent.buttonsResponseMessage) {
-      messageType = 'button'; messageText = msgContent.buttonsResponseMessage.selectedDisplayText;
+      messageType = 'button';
+      // Use button ID (we set these to match expected keywords: YES, NO, DETAILS …)
+      messageText = msgContent.buttonsResponseMessage.selectedButtonId
+        || msgContent.buttonsResponseMessage.selectedDisplayText;
     } else if (msgContent.listResponseMessage) {
       messageType = 'list'; messageText = msgContent.listResponseMessage.title;
     } else if (msgContent.imageMessage) {
@@ -1190,10 +1215,38 @@ function formatCasePreview(c, fallbackLabel) {
   ].filter(Boolean).join('\n');
 }
 
-// Shared send helper
+// Shared send helpers
 async function sendWaText(jid, text) {
   if (DRY_RUN) { console.log(`[DRY RUN][WA] ${jid}: ${text.slice(0, 80)}`); return; }
   if (waSock && waReady) await waSock.sendMessage(jid, { text });
+}
+
+// Send quick-reply buttons (Baileys buttonsMessage).
+// buttons = [{ id: 'YES', label: '✅ Subscribe' }, ...]  — max 3
+// Button IDs must match the keywords the bot already understands (YES, NO, DETAILS …)
+// Falls back to plain numbered text if Baileys rejects the format.
+async function sendWaButtons(jid, text, buttons, footer = 'AFS Legal') {
+  if (DRY_RUN) {
+    console.log(`[DRY RUN][BUTTONS] ${jid}: ${text.slice(0, 60)}`);
+    return;
+  }
+  if (!waSock || !waReady) return;
+  try {
+    await waSock.sendMessage(jid, {
+      text,
+      footer,
+      buttons: buttons.map(b => ({
+        buttonId:   b.id,
+        buttonText: { displayText: b.label },
+        type: 1,
+      })),
+      headerType: 1,
+    });
+  } catch (e) {
+    console.warn('[BUTTONS] buttonsMessage failed, falling back to text:', e.message);
+    const opts = buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n');
+    await sendWaText(jid, `${text}\n\n${opts}`);
+  }
 }
 
 // Session CRUD
@@ -1262,9 +1315,14 @@ async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
     }
     const preview = formatCasePreview(apiData, apiData.caseNumber);
     await upsertSession(phoneE164, 'confirm', { cnr_path: true }, cnr, apiData);
-    await sendWaText(jid,
-      `✅ Found your case:\n\n${preview}\n\n` +
-      `Reply *YES* to subscribe to hearing reminders.\nReply *NO* to cancel.`);
+    await sendWaButtons(jid,
+      `✅ Found your case:\n\n${preview}`,
+      [
+        { id: 'YES', label: '✅ Subscribe to Reminders' },
+        { id: 'NO',  label: '❌ Cancel' },
+      ],
+      'AFS Legal · Hearing Reminders'
+    );
   } catch (e) {
     console.error('[CNR LOOKUP]', e.message);
     await sendWaText(jid,
@@ -1275,14 +1333,19 @@ async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
 
 // Greeting → welcome message (does NOT start step-by-step flow)
 async function sendWelcome(jid) {
-  await sendWaText(jid,
+  await sendWaButtons(jid,
     `⚖️ Welcome to *AFS Legal* onboarding!\n\n` +
     `We'll send you WhatsApp reminders before each court hearing.\n\n` +
-    `*To subscribe, do one of the following:*\n` +
-    `• Send your *CNR number* directly\n` +
-    `  (e.g. *TNTP0XXXXXXXXXX*)\n` +
-    `• Open the *eCourts app* → your case → tap *Share* → paste the link here\n\n` +
-    `Reply *STOP* at any time to unsubscribe.`);
+    `*To subscribe, do any one of these:*\n` +
+    `📷 Take a photo of the QR on your case file and send it here\n` +
+    `📱 Open eCourts app → your case → tap Share → paste the link here\n` +
+    `🔢 Type your CNR number directly (e.g. *TNTP0XXXXXXXXXX*)`,
+    [
+      { id: 'DETAILS', label: '🔍 Search by Case Type & Number' },
+      { id: 'STOP',    label: '🚫 Unsubscribe' },
+    ],
+    'AFS Legal · Hearing Reminders'
+  );
 }
 
 // DETAILS → step-by-step case lookup (3 questions)
@@ -1347,9 +1410,14 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
     const match   = results[0];
     const preview = formatCasePreview(match, `${data.case_type} ${data.case_number}/${year}`);
     await upsertSession(phoneE164, 'confirm', { ...data, year }, match.cnr, match);
-    await sendWaText(jid,
-      `✅ Found your case:\n\n${preview}\n\n` +
-      `Reply *YES* to subscribe to hearing reminders.\nReply *NO* to cancel.`);
+    await sendWaButtons(jid,
+      `✅ Found your case:\n\n${preview}`,
+      [
+        { id: 'YES', label: '✅ Subscribe to Reminders' },
+        { id: 'NO',  label: '❌ Cancel' },
+      ],
+      'AFS Legal · Hearing Reminders'
+    );
 
   } else if (session.step === 'confirm') {
     if (upper === 'YES') {
