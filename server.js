@@ -571,11 +571,26 @@ async function handleInboundMessage(msg) {
     }
 
     // 6. Onboarding / CNR / greeting routing (takes priority over commands)
-    const upperText = (messageText || '').trim().toUpperCase();
+    let upperText = (messageText || '').trim().toUpperCase();
 
     if (upperText !== 'STOP') {
       // 5a. Active onboarding session in progress
       const session = await getActiveSession(phoneE164);
+
+      // Map numbered replies (1/2/3) to keywords based on context
+      if (/^[123]$/.test(upperText)) {
+        if (session?.step === 'confirm') {
+          // confirm menu: 1=YES, 2=NO
+          upperText = upperText === '1' ? 'YES' : 'NO';
+          messageText = upperText;
+        } else if (!session) {
+          // welcome/root menu: 1=DETAILS, 2=STOP
+          const rootMap = { '1': 'DETAILS', '2': 'STOP' };
+          upperText = rootMap[upperText] || upperText;
+          messageText = upperText;
+        }
+      }
+
       if (session) {
         await handleOnboardingStep(session, messageText || '', phoneE164, jid, contact.id);
         return;
@@ -1231,36 +1246,20 @@ async function sendWaText(jid, text) {
   if (waSock && waReady) await waSock.sendMessage(jid, { text });
 }
 
-// Send quick-reply buttons using interactiveMessage / nativeFlowMessage (Baileys 6.x).
-// buttons = [{ id: 'YES', label: '✅ Subscribe' }, ...]  — max 3
-// IDs must match bot keywords (YES, NO, DETAILS, STOP …)
-// Falls back to plain text bullet list on send error.
+// Send a numbered menu (replaces interactive buttons — works on all WhatsApp clients).
+// buttons = [{ id: 'YES', label: '✅ Subscribe' }, ...]
+// Renders as:  1️⃣ Subscribe to Reminders\n2️⃣ Cancel\n\n_Reply 1 or 2_
+const NUMBER_EMOJIS = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
 async function sendWaButtons(jid, text, buttons, footer = 'AFS Legal') {
   if (DRY_RUN) {
-    console.log(`[DRY RUN][BUTTONS] ${jid}: ${text.slice(0, 60)}`);
+    console.log(`[DRY RUN][MENU] ${jid}: ${text.slice(0, 60)}`);
     return;
   }
   if (!waSock || !waReady) return;
-  try {
-    await waSock.sendMessage(jid, {
-      interactiveMessage: {
-        header: { hasMediaAttachment: false },
-        body:   { text },
-        footer: { text: footer },
-        nativeFlowMessage: {
-          buttons: buttons.map(b => ({
-            name:             'quick_reply',
-            buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id }),
-          })),
-          messageParamsJson: '',
-        },
-      },
-    });
-  } catch (e) {
-    console.warn('[BUTTONS] interactiveMessage failed, falling back to text:', e.message);
-    const opts = buttons.map(b => `• ${b.label}`).join('\n');
-    await sendWaText(jid, `${text}\n\n${opts}`);
-  }
+  const menuLines = buttons.map((b, i) => `${NUMBER_EMOJIS[i] || `${i + 1}.`} ${b.label}`);
+  const replyHint = buttons.length === 1 ? '_Reply 1_' : `_Reply 1–${buttons.length}_`;
+  const full = `${text}\n\n${menuLines.join('\n')}\n\n${replyHint}`;
+  await sendWaText(jid, full);
 }
 
 // Session CRUD
@@ -1495,7 +1494,7 @@ async function handleOnboardingStep(session, text, phoneE164, jid, contactId) {
       await sendWaText(jid, 'Cancelled. Reply *DETAILS* to try with different details.');
       await clearSession(phoneE164);
     } else {
-      await sendWaText(jid, 'Please reply *YES* to confirm or *NO* to cancel.');
+      await sendWaText(jid, 'Reply *1* or *YES* to confirm, *2* or *NO* to cancel.');
     }
   }
 }
