@@ -30,7 +30,9 @@ const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
 const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
 const CASE_SYNC_EVENING_HOUR = parseInt(process.env.CASE_SYNC_HOUR         || '12', 10); // 12 UTC = 6 PM IST
-const CASE_SYNC_MORNING_HOUR = parseInt(process.env.CASE_SYNC_MORNING_HOUR || '3',  10); // 03 UTC = 9 AM IST
+const CASE_SYNC_MORNING_HOUR = parseInt(process.env.CASE_SYNC_MORNING_HOUR || '1',  10); // 01 UTC = 6:30 AM IST
+const WATCH_CNRS = (process.env.WATCH_CNRS || 'TNTP010017352023')
+  .split(',').map(s => s.trim().toUpperCase()).filter(Boolean); // synced every 2 h regardless of dedup
 const ADMIN_TOKEN        = process.env.ADMIN_TOKEN        || '';
 const DEFAULT_COURT_CODE = process.env.DEFAULT_COURT_CODE || 'TNTP05';
 
@@ -1758,13 +1760,13 @@ setInterval(() => {
 
 // Two-window daily case sync scheduler (all times UTC)
 //   Evening window — 12:00 UTC (6 PM IST): sync cases heard TODAY
-//   Morning window — 03:00 UTC (9 AM IST): sync cases heard YESTERDAY (overnight staff updates)
+//   Morning window — 01:00 UTC (6:30 AM IST): sync cases heard YESTERDAY (overnight staff updates)
 const lastSyncRun = { evening: null, morning: null };
 setInterval(() => {
   const now     = new Date();
   const hUtc    = now.getUTCHours();
-  const dateKey = now.toISOString().split('T')[0];                               // today YYYY-MM-DD
-  const yestKey = new Date(now - 86_400_000).toISOString().split('T')[0];        // yesterday
+  const dateKey = now.toISOString().split('T')[0];
+  const yestKey = new Date(now - 86_400_000).toISOString().split('T')[0];
 
   if (hUtc === CASE_SYNC_EVENING_HOUR && lastSyncRun.evening !== dateKey) {
     lastSyncRun.evening = dateKey;
@@ -1774,6 +1776,23 @@ setInterval(() => {
   if (hUtc === CASE_SYNC_MORNING_HOUR && lastSyncRun.morning !== dateKey) {
     lastSyncRun.morning = dateKey;
     runDailyCaseSync(yestKey, 'morning').catch(e => console.error('[SYNC] Morning sync error:', e.message));
+  }
+}, 60_000); // check every minute
+
+// Watch cron — syncs WATCH_CNRS every 2 hours, bypassing the dedup window.
+// Use for cases with imminent or overdue hearings that need near-real-time updates.
+const lastWatchSync = new Map(); // cnr → ISO timestamp
+setInterval(async () => {
+  if (!WATCH_CNRS.length) return;
+  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+  for (const cnr of WATCH_CNRS) {
+    const last = lastWatchSync.get(cnr);
+    if (last && last > twoHoursAgo) continue; // ran within last 2h
+    lastWatchSync.set(cnr, Date.now());
+    console.log(`[WATCH] Syncing ${cnr}…`);
+    syncOneCnr(cnr)
+      .then(d => console.log(`[WATCH] ${cnr} → next_hearing=${d}`))
+      .catch(e => console.error(`[WATCH] ${cnr} error:`, e.message));
   }
 }, 60_000); // check every minute
 
