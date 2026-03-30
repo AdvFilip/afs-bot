@@ -1047,18 +1047,34 @@ async function syncOneCnr(cnr) {
 async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
   console.log(`[SYNC][${windowName}] Checking for open cases with past hearing date <= ${targetDateStr} ...`);
 
-  // 48-hour cooldown — prevents re-burning credits on a case synced in the last 2 days
+  // Dedup windows:
+  //   Same-day / tomorrow: 48h — hearing just happened, court may not have updated yet
+  //   Firmly past (>1 day ago): 12h — court is likely posting new date; check more often
   const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const twelveHoursAgo     = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+  const oneDayAgoStr       = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
 
-  // 1. Open cases whose hearing date has arrived or is overdue (lte, not eq)
-  //    AND not synced in the last 48 hours
-  const { data: stale, error: e1 } = await supabase
+  // 1a. Same-day cases (hearing today or yesterday) — 48h dedup
+  const { data: staleSameDay, error: e1a } = await supabase
     .from('cases')
     .select('cino')
     .eq('case_status', 'open')
     .not('next_hearing_date', 'is', null)
+    .gte('next_hearing_date', oneDayAgoStr)
     .lte('next_hearing_date', targetDateStr)
     .or(`last_synced_at.is.null,last_synced_at.lt.${fortyEightHoursAgo}`);
+
+  // 1b. Firmly-past cases (hearing >1 day ago) — 12h dedup so we catch court updates sooner
+  const { data: stalePast, error: e1b } = await supabase
+    .from('cases')
+    .select('cino')
+    .eq('case_status', 'open')
+    .not('next_hearing_date', 'is', null)
+    .lt('next_hearing_date', oneDayAgoStr)
+    .or(`last_synced_at.is.null,last_synced_at.lt.${twelveHoursAgo}`);
+
+  const e1 = e1a || e1b;
+  const stale = [...(staleSameDay || []), ...(stalePast || [])];
 
   // 2. Open cases never synced yet — could have next_hearing_date=null (partial data)
   const { data: fresh, error: e2 } = await supabase
@@ -1352,17 +1368,24 @@ function formatDateIST(dateStr) {
 function formatCasePreview(c, fallbackLabel) {
   const petitioners = Array.isArray(c.petitioners) ? c.petitioners : [];
   const respondents  = Array.isArray(c.respondents)  ? c.respondents  : [];
-  const title   = [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || fallbackLabel || c.cnr || '';
-  const ref     = c.caseNumber || c.reference || fallbackLabel || '';
-  const court   = c.courtName  || c.court_name  || c.courtCode  || c.court_code  || '';
-  const hearing = formatDateIST(c.nextHearingDate || c.next_hearing_date);
-  const stage   = c.purpose    || c.purpose_name  || '';
+  const title      = [petitioners[0], respondents[0]].filter(Boolean).join(' vs ') || fallbackLabel || c.cnr || '';
+  const ref        = c.caseNumber || c.reference || fallbackLabel || '';
+  const court      = c.courtName  || c.court_name  || c.courtCode  || c.court_code  || '';
+  const stage      = c.purpose    || c.purpose_name  || '';
+  const hearingRaw = c.nextHearingDate || c.next_hearing_date || null;
+  const today      = new Date().toISOString().split('T')[0];
+  const isPast     = hearingRaw && hearingRaw < today;
+  const hearingLine = hearingRaw
+    ? isPast
+      ? `📅 Last Hearing: ${formatDateIST(hearingRaw)} _(next date awaited from court)_`
+      : `📅 Next Hearing: ${formatDateIST(hearingRaw)}`
+    : `📅 Hearing date not yet scheduled`;
   return [
     `📋 Case: ${ref}`,
     `👥 ${title}`,
-    court   ? `🏛️  ${court}`            : null,
-    `📅 Next Hearing: ${hearing}`,
-    stage   ? `⚖️  Stage: ${stage}`      : null,
+    court ? `🏛️  ${court}` : null,
+    hearingLine,
+    stage ? `⚖️  Stage: ${stage}` : null,
   ].filter(Boolean).join('\n');
 }
 
