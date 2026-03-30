@@ -491,13 +491,23 @@ async function handleInboundMessage(msg) {
       messageType = 'text'; messageText = msgContent.conversation;
     } else if (msgContent.extendedTextMessage?.text) {
       messageType = 'text'; messageText = msgContent.extendedTextMessage.text;
+    } else if (msgContent.interactiveResponseMessage) {
+      // Native flow quick-reply button tapped
+      messageType = 'button';
+      try {
+        const p = JSON.parse(
+          msgContent.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson || '{}'
+        );
+        messageText = p.id || p.display_text || '';
+      } catch { messageText = ''; }
     } else if (msgContent.buttonsResponseMessage) {
       messageType = 'button';
-      // Use button ID (we set these to match expected keywords: YES, NO, DETAILS …)
       messageText = msgContent.buttonsResponseMessage.selectedButtonId
         || msgContent.buttonsResponseMessage.selectedDisplayText;
     } else if (msgContent.listResponseMessage) {
-      messageType = 'list'; messageText = msgContent.listResponseMessage.title;
+      messageType = 'list';
+      messageText = msgContent.listResponseMessage.singleSelectReply?.selectedRowId
+        || msgContent.listResponseMessage.title;
     } else if (msgContent.imageMessage) {
       messageType = 'image';
     } else if (msgContent.videoMessage || msgContent.audioMessage || msgContent.documentMessage) {
@@ -1221,10 +1231,10 @@ async function sendWaText(jid, text) {
   if (waSock && waReady) await waSock.sendMessage(jid, { text });
 }
 
-// Send quick-reply buttons (Baileys buttonsMessage).
+// Send quick-reply buttons using interactiveMessage / nativeFlowMessage (Baileys 6.x).
 // buttons = [{ id: 'YES', label: '✅ Subscribe' }, ...]  — max 3
-// Button IDs must match the keywords the bot already understands (YES, NO, DETAILS …)
-// Falls back to plain numbered text if Baileys rejects the format.
+// IDs must match bot keywords (YES, NO, DETAILS, STOP …)
+// Falls back to plain text bullet list on send error.
 async function sendWaButtons(jid, text, buttons, footer = 'AFS Legal') {
   if (DRY_RUN) {
     console.log(`[DRY RUN][BUTTONS] ${jid}: ${text.slice(0, 60)}`);
@@ -1233,18 +1243,22 @@ async function sendWaButtons(jid, text, buttons, footer = 'AFS Legal') {
   if (!waSock || !waReady) return;
   try {
     await waSock.sendMessage(jid, {
-      text,
-      footer,
-      buttons: buttons.map(b => ({
-        buttonId:   b.id,
-        buttonText: { displayText: b.label },
-        type: 1,
-      })),
-      headerType: 1,
+      interactiveMessage: {
+        header: { hasMediaAttachment: false },
+        body:   { text },
+        footer: { text: footer },
+        nativeFlowMessage: {
+          buttons: buttons.map(b => ({
+            name:             'quick_reply',
+            buttonParamsJson: JSON.stringify({ display_text: b.label, id: b.id }),
+          })),
+          messageParamsJson: '',
+        },
+      },
     });
   } catch (e) {
-    console.warn('[BUTTONS] buttonsMessage failed, falling back to text:', e.message);
-    const opts = buttons.map((b, i) => `${i + 1}. ${b.label}`).join('\n');
+    console.warn('[BUTTONS] interactiveMessage failed, falling back to text:', e.message);
+    const opts = buttons.map(b => `• ${b.label}`).join('\n');
     await sendWaText(jid, `${text}\n\n${opts}`);
   }
 }
