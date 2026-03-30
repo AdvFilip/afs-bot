@@ -584,10 +584,15 @@ async function handleInboundMessage(msg) {
           upperText = upperText === '1' ? 'YES' : 'NO';
           messageText = upperText;
         } else if (!session) {
-          // welcome/root menu: 1=DETAILS, 2=STOP
-          const rootMap = { '1': 'DETAILS', '2': 'STOP' };
-          upperText = rootMap[upperText] || upperText;
-          messageText = upperText;
+          // welcome menu: 1=CNR prompt, 2=QR photo prompt
+          if (upperText === '1') {
+            await sendWaText(jid, `Please type your *CNR number* and send it here.\n\n_Example: TNTP0XXXXXXXXXX_`);
+            return;
+          }
+          if (upperText === '2') {
+            await sendWaText(jid, `📷 Please *take a photo* of the QR code on your case file and send it here.\n\n_Make sure the QR code is fully visible and in focus._`);
+            return;
+          }
         }
       }
 
@@ -1346,18 +1351,13 @@ async function handleCnrLookup(cnr, phoneE164, jid, contactId) {
 
 // Greeting → welcome message (does NOT start step-by-step flow)
 async function sendWelcome(jid) {
-  await sendWaButtons(jid,
+  await sendWaText(jid,
     `⚖️ Welcome to *AFS Legal* onboarding!\n\n` +
     `We'll send you WhatsApp reminders before each court hearing.\n\n` +
-    `*To subscribe, do any one of these:*\n` +
-    `📷 Take a photo of the QR on your case file and send it here\n` +
-    `📱 Open eCourts app → your case → tap Share → paste the link here\n` +
-    `🔢 Type your CNR number directly (e.g. *TNTP0XXXXXXXXXX*)`,
-    [
-      { id: 'DETAILS', label: '🔍 Search by Case Type & Number' },
-      { id: 'STOP',    label: '🚫 Unsubscribe' },
-    ],
-    'AFS Legal · Hearing Reminders'
+    `To subscribe, do any one of these:\n` +
+    `🔢 1️⃣ Type your CNR number directly (e.g. *TNTP0XXXXXXXXXX*)\n` +
+    `📷 2️⃣ Open eCourts app → your case → take a photo of the QR on your case file and share it here\n\n` +
+    `_Reply 1–2_`
   );
 }
 
