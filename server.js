@@ -405,65 +405,178 @@ async function executeCommand(command, args, contactId, cmdId, phoneE164, replyJ
 }
 
 // ===== Image QR decoder =====
-// User sends a photo of a QR code → decode → extract CNR → lookup
+// Multi-strategy pipeline: ZXing WASM (industry-standard) → jsQR fallback.
+// Each decoder is tried against multiple image variants (original, resized,
+// grayscale, Otsu-thresholded, inverted) so real-world camera photos decode.
+
+// Raw-pixel helpers — no jimp method-API dependency
+function toGrayscaleRGBA(src) {
+  const out = new Uint8ClampedArray(src.length);
+  for (let i = 0; i < src.length; i += 4) {
+    const l = (src[i] * 299 + src[i + 1] * 587 + src[i + 2] * 114) / 1000;
+    out[i] = out[i + 1] = out[i + 2] = l; out[i + 3] = src[i + 3];
+  }
+  return out;
+}
+
+function otsuThreshold(gray, n) {
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < gray.length; i += 4) hist[gray[i]]++;
+  let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+  let sumB = 0, wB = 0, max = 0, t = 128;
+  for (let i = 0; i < 256; i++) {
+    wB += hist[i]; if (!wB) continue;
+    const wF = n - wB; if (!wF) break;
+    sumB += i * hist[i];
+    const between = wB * wF * ((sumB / wB) - ((sum - sumB) / wF)) ** 2;
+    if (between > max) { max = between; t = i; }
+  }
+  return t;
+}
+
+function toBinaryRGBA(gray, threshold) {
+  const out = new Uint8ClampedArray(gray.length);
+  for (let i = 0; i < gray.length; i += 4) {
+    const v = gray[i] < threshold ? 0 : 255;
+    out[i] = out[i + 1] = out[i + 2] = v; out[i + 3] = 255;
+  }
+  return out;
+}
+
+function invertRGBA(data) {
+  const out = new Uint8ClampedArray(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    out[i] = 255 - data[i]; out[i + 1] = 255 - data[i + 1];
+    out[i + 2] = 255 - data[i + 2]; out[i + 3] = data[i + 3];
+  }
+  return out;
+}
+
+function scaleRGBA(src, sw, sh, tw, th) {
+  const out = new Uint8ClampedArray(tw * th * 4);
+  const xr = sw / tw, yr = sh / th;
+  for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    const si = (Math.floor(y * yr) * sw + Math.floor(x * xr)) * 4;
+    const di = (y * tw + x) * 4;
+    out[di] = src[si]; out[di + 1] = src[si + 1];
+    out[di + 2] = src[si + 2]; out[di + 3] = src[si + 3];
+  }
+  return out;
+}
+
+function buildVariants(data, w, h) {
+  const variants = [];
+  const push = (d, pw, ph) => variants.push({ data: d, width: pw, height: ph });
+
+  // 1. Original
+  push(new Uint8ClampedArray(data), w, h);
+
+  // 2. Grayscale
+  const gray = toGrayscaleRGBA(data);
+  push(gray, w, h);
+
+  // 3. Otsu binary (best for printed QR on paper)
+  const t = otsuThreshold(gray, w * h);
+  const binary = toBinaryRGBA(gray, t);
+  push(binary, w, h);
+
+  // 4. Inverted binary (dark-background QR codes)
+  push(invertRGBA(binary), w, h);
+
+  // 5. Scaled-down versions (helps when QR is small in a large photo)
+  const maxDim = Math.max(w, h);
+  for (const target of [1200, 800, 500]) {
+    if (maxDim > target * 1.2) {
+      const scale = target / maxDim;
+      const tw = Math.round(w * scale), th = Math.round(h * scale);
+      push(scaleRGBA(binary, w, h, tw, th), tw, th);
+    }
+  }
+
+  return variants;
+}
+
 async function handleImageQr(msg, phoneE164, jid, contactId) {
   await sendWaText(jid, '🔍 Scanning your image for a QR code…');
   try {
     const { Jimp } = require('jimp');
-    const jsQR     = require('jsqr');
 
-    // Pass waSock for media re-upload fallback (handles expired media URLs)
     const buffer = await downloadMediaMessage(
       msg, 'buffer', {},
       { reuploadRequest: waSock?.updateMediaMessage }
     );
-    const image  = await Jimp.fromBuffer(buffer);
-
-    // jsQR needs flat RGBA Uint8ClampedArray
+    const image = await Jimp.fromBuffer(buffer);
     const { data, width, height } = image.bitmap;
-    const code = jsQR(new Uint8ClampedArray(data), width, height, {
-      inversionAttempts: 'attemptBoth',   // try inverted too (dark bg QR codes)
-    });
 
-    if (!code) {
-      await sendWaButtons(jid,
+    const variants = buildVariants(data, width, height);
+    let decoded = null;
+
+    // ── Primary: ZXing WASM (industry-standard, handles real-world photos) ──
+    try {
+      const { setZXingModuleOverrides, readBarcodesFromImageData } = await import('zxing-wasm/reader');
+      // Load WASM binary from filesystem — avoids fetch() failure in Node.js
+      const wasmBinary = fs.readFileSync(
+        path.join(__dirname, 'node_modules/zxing-wasm/dist/reader/zxing_reader.wasm')
+      );
+      setZXingModuleOverrides({ wasmBinary });
+      for (const v of variants) {
+        const results = await readBarcodesFromImageData(v, {
+          formats:      ['QRCode'],
+          tryHarder:    true,
+          tryRotate:    true,
+          tryInvert:    true,
+          tryDownscale: true,
+        });
+        if (results?.length && results[0].text) {
+          decoded = results[0].text;
+          console.log(`[IMAGE QR] ZXing decoded: ${decoded.slice(0, 80)}`);
+          break;
+        }
+      }
+    } catch (zxErr) {
+      console.warn('[IMAGE QR] ZXing unavailable, falling back to jsQR:', zxErr.message);
+    }
+
+    // ── Fallback: jsQR (faster, works for clean/screenshot QR codes) ──
+    if (!decoded) {
+      const jsQR = require('jsqr');
+      for (const v of variants) {
+        const code = jsQR(v.data, v.width, v.height, { inversionAttempts: 'attemptBoth' });
+        if (code?.data) {
+          decoded = code.data;
+          console.log(`[IMAGE QR] jsQR decoded: ${decoded.slice(0, 80)}`);
+          break;
+        }
+      }
+    }
+
+    if (!decoded) {
+      await sendWaText(jid,
         `❌ Couldn't read the QR code from that image.\n\n` +
-        `Tips for a clear scan:\n` +
-        `• Frame the QR code fully — no cropping\n` +
+        `Tips for a clearer scan:\n` +
+        `• Frame only the QR code — no cropping\n` +
         `• Good lighting, no glare or shadows\n` +
-        `• Hold steady and close to the code`,
-        [
-          { id: 'DETAILS', label: '🔍 Search by Case Details Instead' },
-        ],
-        'Or type your CNR number directly'
-      );
+        `• Hold the camera steady and close to the code\n\n` +
+        `Or type your CNR number directly (e.g. *TNTP0XXXXXXXXXX*)`);
       return;
     }
 
-    console.log(`[IMAGE QR] Decoded: ${code.data.slice(0, 80)}`);
-    const cnr = extractCnr(code.data);
+    const cnr = extractCnr(decoded);
     if (!cnr) {
-      await sendWaButtons(jid,
-        `QR code scanned, but it doesn't contain a CNR number.\n\n` +
-        `Please use the QR code from your *eCourts case page*, not a generic QR.`,
-        [
-          { id: 'DETAILS', label: '🔍 Search by Case Details Instead' },
-        ],
-        `Decoded: ${code.data.slice(0, 60)}`
-      );
+      await sendWaText(jid,
+        `✅ QR code scanned, but it doesn't contain a CNR number.\n\n` +
+        `Please use the QR code from your *eCourts case page*, not a generic QR.\n\n` +
+        `_Decoded: ${decoded.slice(0, 80)}_`);
       return;
     }
 
-    // CNR found — proceed with normal lookup
     await handleCnrLookup(cnr, phoneE164, jid, contactId);
 
   } catch (e) {
     console.error('[IMAGE QR ERROR]', e.message);
-    await sendWaButtons(jid,
-      `❌ Could not process that image. Please send a clearer photo of the QR code.`,
-      [{ id: 'DETAILS', label: '🔍 Search by Case Details Instead' }],
-      'Or type your CNR number directly'
-    );
+    await sendWaText(jid,
+      `❌ Could not process that image. Please send a clearer photo of the QR code.\n\n` +
+      `Or type your CNR number directly (e.g. *TNTP0XXXXXXXXXX*)`);
   }
 }
 
