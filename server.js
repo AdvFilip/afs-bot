@@ -29,7 +29,7 @@ const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
 const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
-const CASE_SYNC_HOUR = parseInt(process.env.CASE_SYNC_HOUR || '12', 10); // 12 UTC = 6 PM IST
+const CASE_SYNC_HOUR = parseInt(process.env.CASE_SYNC_HOUR || '16', 10); // 16 UTC = 10 PM IST (16:30 UTC exact)
 const ADMIN_TOKEN        = process.env.ADMIN_TOKEN        || '';
 const DEFAULT_COURT_CODE = process.env.DEFAULT_COURT_CODE || 'TNTP05';
 
@@ -1744,7 +1744,7 @@ let lastDailySyncDate = null;
 setInterval(() => {
   const now     = new Date();
   const dateKey = now.toISOString().split('T')[0];
-  if (now.getUTCHours() === CASE_SYNC_HOUR && lastDailySyncDate !== dateKey) {
+  if (now.getUTCHours() === CASE_SYNC_HOUR && now.getUTCMinutes() >= 30 && lastDailySyncDate !== dateKey) {
     lastDailySyncDate = dateKey;
     runDailyCaseSync(dateKey, 'daily').catch(e => console.error('[SYNC] Daily sync error:', e.message));
   }
