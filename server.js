@@ -477,12 +477,20 @@ async function handleInboundMessage(msg) {
     const phoneE164 = `+${jid.split('@')[0]}`;
     const rawContent = msg.message || {};
 
-    // Unwrap ephemeral / view-once containers so media detection works for all share methods
-    const msgContent =
-      rawContent.ephemeralMessage?.message  ||
-      rawContent.viewOnceMessage?.message   ||
-      rawContent.viewOnceMessageV2?.message ||
-      rawContent;
+    // Unwrap all WhatsApp message containers — mirrors Baileys' normalizeMessageContent.
+    // Handles: ephemeral, view-once, document-with-caption, edited, and future-proof variants.
+    let msgContent = rawContent;
+    for (let i = 0; i < 5; i++) {
+      const inner =
+        msgContent.ephemeralMessage           ||
+        msgContent.viewOnceMessage            ||
+        msgContent.viewOnceMessageV2          ||
+        msgContent.viewOnceMessageV2Extension ||
+        msgContent.documentWithCaptionMessage ||
+        msgContent.editedMessage;
+      if (!inner) break;
+      msgContent = inner.message || inner;
+    }
 
     // Detect type and text
     let messageType = 'unknown';
@@ -510,7 +518,11 @@ async function handleInboundMessage(msg) {
         || msgContent.listResponseMessage.title;
     } else if (msgContent.imageMessage) {
       messageType = 'image';
-    } else if (msgContent.videoMessage || msgContent.audioMessage || msgContent.documentMessage) {
+    } else if (msgContent.documentMessage) {
+      // Images sent as "document" still need QR scan; check MIME type
+      const mime = msgContent.documentMessage.mimetype || '';
+      messageType = mime.startsWith('image/') ? 'image' : 'media';
+    } else if (msgContent.videoMessage || msgContent.audioMessage) {
       messageType = 'media';
     }
 
