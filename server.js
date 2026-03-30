@@ -29,10 +29,7 @@ const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 10000);
 const MAX_BATCH = Number(process.env.MAX_BATCH || 20);
 const ECOURTS_API_KEY  = process.env.ECOURTS_API_KEY  || '';
 const ECOURTS_API_BASE = process.env.ECOURTS_API_BASE || 'https://webapi.ecourtsindia.com';
-const CASE_SYNC_EVENING_HOUR = parseInt(process.env.CASE_SYNC_HOUR         || '12', 10); // 12 UTC = 6 PM IST
-const CASE_SYNC_MORNING_HOUR = parseInt(process.env.CASE_SYNC_MORNING_HOUR || '1',  10); // 01 UTC = 6:30 AM IST
-const WATCH_CNRS = (process.env.WATCH_CNRS || 'TNTP010017352023')
-  .split(',').map(s => s.trim().toUpperCase()).filter(Boolean); // synced every 2 h regardless of dedup
+const CASE_SYNC_HOUR = parseInt(process.env.CASE_SYNC_HOUR || '12', 10); // 12 UTC = 6 PM IST
 const ADMIN_TOKEN        = process.env.ADMIN_TOKEN        || '';
 const DEFAULT_COURT_CODE = process.env.DEFAULT_COURT_CODE || 'TNTP05';
 
@@ -1047,36 +1044,18 @@ async function syncOneCnr(cnr) {
 //   Newly onboarded cases may have next_hearing_date=NULL (partial search data).
 //   They are always included in the first run so they get a full CASE_DETAIL fetch.
 async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
-  console.log(`[SYNC][${windowName}] Checking for open cases with past hearing date <= ${targetDateStr} ...`);
+  console.log(`[SYNC][${windowName}] Syncing open cases with next_hearing_date = ${targetDateStr} ...`);
 
-  // Dedup windows:
-  //   Same-day / tomorrow: 48h — hearing just happened, court may not have updated yet
-  //   Firmly past (>1 day ago): 12h — court is likely posting new date; check more often
-  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const twelveHoursAgo     = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
-  const oneDayAgoStr       = new Date(Date.now() - 86_400_000).toISOString().split('T')[0];
+  // Only cases heard TODAY — exact match, no past backfill.
+  // 24h dedup guards against double-billing on the same calendar day.
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  // 1a. Same-day cases (hearing today or yesterday) — 48h dedup
-  const { data: staleSameDay, error: e1a } = await supabase
+  const { data: stale, error: e1 } = await supabase
     .from('cases')
     .select('cino')
     .eq('case_status', 'open')
-    .not('next_hearing_date', 'is', null)
-    .gte('next_hearing_date', oneDayAgoStr)
-    .lte('next_hearing_date', targetDateStr)
-    .or(`last_synced_at.is.null,last_synced_at.lt.${fortyEightHoursAgo}`);
-
-  // 1b. Firmly-past cases (hearing >1 day ago) — 12h dedup so we catch court updates sooner
-  const { data: stalePast, error: e1b } = await supabase
-    .from('cases')
-    .select('cino')
-    .eq('case_status', 'open')
-    .not('next_hearing_date', 'is', null)
-    .lt('next_hearing_date', oneDayAgoStr)
-    .or(`last_synced_at.is.null,last_synced_at.lt.${twelveHoursAgo}`);
-
-  const e1 = e1a || e1b;
-  const stale = [...(staleSameDay || []), ...(stalePast || [])];
+    .eq('next_hearing_date', targetDateStr)
+    .or(`last_synced_at.is.null,last_synced_at.lt.${twentyFourHoursAgo}`);
 
   // 2. Open cases never synced yet — could have next_hearing_date=null (partial data)
   const { data: fresh, error: e2 } = await supabase
@@ -1093,11 +1072,11 @@ async function runDailyCaseSync(targetDateStr, windowName = 'manual') {
   ]);
 
   if (!cinoSet.size) {
-    console.log(`[SYNC][${windowName}] No stale cases — DB is current, no credits used.`);
+    console.log(`[SYNC][${windowName}] No cases heard today — 0 credits used.`);
     return;
   }
 
-  console.log(`[SYNC][${windowName}] Refreshing ${cinoSet.size} case(s) with past/unsynced dates...`);
+  console.log(`[SYNC][${windowName}] Syncing ${cinoSet.size} case(s) heard today...`);
   let ok = 0, failed = 0;
   for (const cino of cinoSet) {
     try { await syncOneCnr(cino); ok++; }
@@ -1758,43 +1737,18 @@ setInterval(() => {
   claimAndProcessDue().catch((e) => console.error("SCHEDULER ERROR:", e.message));
 }, SCAN_INTERVAL_MS);
 
-// Two-window daily case sync scheduler (all times UTC)
-//   Evening window — 12:00 UTC (6 PM IST): sync cases heard TODAY
-//   Morning window — 01:00 UTC (6:30 AM IST): sync cases heard YESTERDAY (overnight staff updates)
-const lastSyncRun = { evening: null, morning: null };
+// Single daily sync — 12:00 UTC (6 PM IST).
+// Only syncs open cases with next_hearing_date = TODAY. One API call per case, once per day.
+// Zero credits spent on future-dated or already-closed cases.
+let lastDailySyncDate = null;
 setInterval(() => {
   const now     = new Date();
-  const hUtc    = now.getUTCHours();
   const dateKey = now.toISOString().split('T')[0];
-  const yestKey = new Date(now - 86_400_000).toISOString().split('T')[0];
-
-  if (hUtc === CASE_SYNC_EVENING_HOUR && lastSyncRun.evening !== dateKey) {
-    lastSyncRun.evening = dateKey;
-    runDailyCaseSync(dateKey, 'evening').catch(e => console.error('[SYNC] Evening sync error:', e.message));
+  if (now.getUTCHours() === CASE_SYNC_HOUR && lastDailySyncDate !== dateKey) {
+    lastDailySyncDate = dateKey;
+    runDailyCaseSync(dateKey, 'daily').catch(e => console.error('[SYNC] Daily sync error:', e.message));
   }
-
-  if (hUtc === CASE_SYNC_MORNING_HOUR && lastSyncRun.morning !== dateKey) {
-    lastSyncRun.morning = dateKey;
-    runDailyCaseSync(yestKey, 'morning').catch(e => console.error('[SYNC] Morning sync error:', e.message));
-  }
-}, 60_000); // check every minute
-
-// Watch cron — syncs WATCH_CNRS every 2 hours, bypassing the dedup window.
-// Use for cases with imminent or overdue hearings that need near-real-time updates.
-const lastWatchSync = new Map(); // cnr → ISO timestamp
-setInterval(async () => {
-  if (!WATCH_CNRS.length) return;
-  const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
-  for (const cnr of WATCH_CNRS) {
-    const last = lastWatchSync.get(cnr);
-    if (last && last > twoHoursAgo) continue; // ran within last 2h
-    lastWatchSync.set(cnr, Date.now());
-    console.log(`[WATCH] Syncing ${cnr}…`);
-    syncOneCnr(cnr)
-      .then(d => console.log(`[WATCH] ${cnr} → next_hearing=${d}`))
-      .catch(e => console.error(`[WATCH] ${cnr} error:`, e.message));
-  }
-}, 60_000); // check every minute
+}, 60_000);
 
 // ===== Start =====
 app.listen(PORT, async () => {
