@@ -619,7 +619,7 @@ async function handleInboundMessage(msg) {
         return;
       }
       // 5c. Greeting → welcome message
-      if (['HI', 'HELLO', 'HEY', 'HELP', '?'].includes(upperText)) {
+      if (['HI', 'HELLO', 'HEY', 'HELP', 'HAI', 'HII', 'HELO', 'WELCOME', '?', 'MENU', 'HOME'].includes(upperText)) {
         await sendWelcome(jid);
         return;
       }
@@ -641,19 +641,15 @@ async function handleInboundMessage(msg) {
     if (command !== 'UNKNOWN') {
       await executeCommand(command, args, contact.id, cmd.id, phoneE164, jid);
     } else {
-      // Nothing recognised — give a helpful nudge
+      // Nothing recognised — show welcome again so the user always sees the right format
       const looksLikeNumber = /^\d{8,}$/.test((messageText || '').trim());
       if (looksLikeNumber) {
         await sendWaText(jid,
-          `That looks like a case number, but CNR numbers start with your court code.\n\n` +
+          `That looks like a case number, but CNR numbers always start with the court code letters.\n\n` +
           `Example: *TNTP050007832023*\n\n` +
-          `You can find your CNR in the eCourts app or on your case documents.\n` +
-          `Send the full CNR or reply *DETAILS* to search step by step.`);
+          `Find your CNR in the eCourts app or on your case documents and send it here.`);
       } else {
-        await sendWaText(jid,
-          `Send your *CNR number* to subscribe to hearing reminders\n` +
-          `(e.g. *TNTP0XXXXXXXXXX*)\n\n` +
-          `Reply *STOP* to unsubscribe.`);
+        await sendWelcome(jid);
       }
     }
 
