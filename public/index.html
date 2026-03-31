@@ -93,7 +93,7 @@
     .search-box:focus { border-color: var(--gold); }
     @media(max-width:600px){ .search-box { width: 100%; } .toolbar { flex-direction: column; align-items: stretch; } }
 
-    /* TABLE — horizontal scroll on mobile */
+    /* TABLE */
     .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; font-size: .82rem; min-width: 700px; }
     thead tr { background: var(--dark); }
@@ -102,6 +102,24 @@
     td { padding: 10px 11px; border-top: 1px solid var(--border); vertical-align: middle; }
     tbody tr:hover td { background: #f5f0e6; cursor: default; }
     .no-rows td { text-align: center; padding: 40px; color: var(--muted); }
+
+    /* MOBILE TABLE — hide non-essential columns, remove horizontal scroll */
+    @media(max-width:600px){
+      .table-wrap { overflow-x: hidden; }
+      table { min-width: 0; width: 100%; }
+      /* Hide: # (1), CINO (2), Petitioner (4), Respondent (5), Court (6), Purpose (8), Contacts (10) */
+      th:nth-child(1),td:nth-child(1),
+      th:nth-child(2),td:nth-child(2),
+      th:nth-child(4),td:nth-child(4),
+      th:nth-child(5),td:nth-child(5),
+      th:nth-child(6),td:nth-child(6),
+      th:nth-child(8),td:nth-child(8),
+      th:nth-child(10),td:nth-child(10) { display: none; }
+      /* Kept: Case (3), Hearing Date (7), Days (9), Actions (11) */
+      td:nth-child(11) { display: flex; gap: 6px; flex-wrap: wrap; }
+      .link-btn,.prev-btn { font-size: .8rem; padding: 7px 12px; }
+      .case-ref { font-size: .84rem; }
+    }
     .cino-link { font-family: monospace; font-size: .76rem; color: var(--blue); font-weight: 600; }
     .case-ref  { font-weight: 700; font-size: .86rem; color: var(--text); }
     .party-main { font-size: .82rem; }
@@ -308,7 +326,7 @@
         <div style="display:flex;gap:8px">
           <input class="form-input" id="linkPhone" type="tel" placeholder="9876543210 or +919876543210"
             autocomplete="tel" inputmode="tel" style="flex:1" />
-          <button class="link-btn" id="contactPickerBtn" onclick="pickContact()" title="Pick from contacts" style="display:none">📒</button>
+          <button class="link-btn" id="contactPickerBtn" onclick="pickContact()" title="Pick from contacts">📒</button>
         </div>
       </div>
       <div class="add-result" id="linkResult"></div>
@@ -694,22 +712,21 @@ async function submitCnrs(){
   }finally{ btn.textContent='Add to Database'; btn.disabled=false; }
 }
 
-// ── Contact Picker API (Android Chrome / supported browsers) ─────────────
+// ── Contact Picker API ────────────────────────────────────────────────────
 async function pickContact(){
+  if(!('contacts' in navigator && 'ContactsManager' in window)){
+    alert('Contact picker not supported on this browser.\nAndroid Chrome supports it — or type the number manually.');
+    return;
+  }
   try{
     const contacts = await navigator.contacts.select(['name','tel'],{multiple:false});
     if(!contacts||!contacts.length) return;
     const c = contacts[0];
     if(c.name&&c.name[0])  document.getElementById('linkName').value  = c.name[0];
     if(c.tel &&c.tel[0])   document.getElementById('linkPhone').value = c.tel[0].replace(/\s+/g,'');
-  }catch(e){ console.warn('Contact picker:', e.message); }
-}
-// Show picker button only if the API is available
-if('contacts' in navigator && 'select' in navigator.contacts){
-  document.addEventListener('DOMContentLoaded',()=>{
-    const btn = document.getElementById('contactPickerBtn');
-    if(btn) btn.style.display='';
-  });
+  }catch(e){
+    if(e.name!=='AbortError') alert('Could not open contacts: '+e.message);
+  }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
