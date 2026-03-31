@@ -137,6 +137,15 @@
     .add-result { margin-top: 12px; font-size: .82rem; padding: 10px 12px; border-radius: var(--radius); display: none; }
     .add-result.ok  { background: #e8f5e9; color: #2e7d32; display: block; }
     .add-result.err { background: #fdecea; color: #c62828; display: block; }
+
+    /* LINK CONTACT MODAL */
+    .link-modal { max-width: 420px; }
+    .form-row { margin-bottom: 14px; }
+    .form-row label { display: block; font-size: .75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 5px; }
+    .form-input { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-size: .88rem; outline: none; background: #fff; }
+    .form-input:focus { border-color: var(--gold); }
+    .link-btn { padding: 6px 12px; background: var(--brand); color: #fff; border: none; border-radius: var(--radius); font-size: .75rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+    .link-btn:hover { opacity: .85; }
     .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: var(--gold); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: middle; }
     @keyframes sp { to { transform: rotate(360deg); } }
 
@@ -228,7 +237,7 @@
           <tr>
             <th>#</th><th>CINO</th><th>Case</th><th>Petitioner</th>
             <th>Respondent</th><th>Court</th><th>Hearing Date</th>
-            <th>Purpose</th><th>Days</th><th>Preview</th>
+            <th>Purpose</th><th>Days</th><th>Contacts</th><th>Actions</th>
           </tr>
         </thead>
         <tbody id="casesBody">
@@ -262,6 +271,35 @@
     </div>
   </div>
 </main>
+
+<!-- LINK CONTACT MODAL -->
+<div class="modal-backdrop" id="linkModalBackdrop" onclick="closeLinkModal(event)">
+  <div class="modal link-modal">
+    <div class="modal-hdr">
+      <button class="modal-close" onclick="closeLinkModal()">&times;</button>
+      <h2>Link Contact</h2>
+      <div class="meta" id="linkModalMeta">—</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label>Client Name (optional)</label>
+        <input class="form-input" id="linkName" placeholder="e.g. S. Vijayakumar" autocomplete="name" />
+      </div>
+      <div class="form-row">
+        <label>WhatsApp Number</label>
+        <div style="display:flex;gap:8px">
+          <input class="form-input" id="linkPhone" type="tel" placeholder="9876543210 or +919876543210"
+            autocomplete="tel" inputmode="tel" style="flex:1" />
+          <button class="link-btn" id="contactPickerBtn" onclick="pickContact()" title="Pick from contacts" style="display:none">📒</button>
+        </div>
+      </div>
+      <div class="add-result" id="linkResult"></div>
+      <div class="msg-actions" style="margin-top:14px">
+        <button class="copy-btn" id="linkBtn" onclick="submitLink()">Link &amp; Schedule Reminders</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- ADD CASES MODAL -->
 <div class="modal-backdrop" id="addModalBackdrop" onclick="closeAddModal(event)">
@@ -435,19 +473,29 @@ function applyCaseFilter(){
 
 function renderCases(rows){
   const tbody=document.getElementById('casesBody');
-  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="10">No cases match.</td></tr>'; return; }
-  tbody.innerHTML=rows.map((c,i)=>`<tr>
-    <td style="color:#888;font-size:.78rem">${i+1}</td>
-    <td><span class="cino-link">${esc(c.cino)}</span></td>
-    <td><span class="case-ref">${esc(c.reference||c.title||c.cino)}</span></td>
-    <td><span class="party-main">${partyName(c.petitioners)}</span></td>
-    <td><span class="party-main">${partyName(c.respondents)}</span></td>
-    <td style="font-size:.8rem;color:var(--muted);max-width:180px">${esc(c.court_name||'—')}</td>
-    <td style="white-space:nowrap;font-size:.82rem">${c.next_hearing_date?fmtDate(c.next_hearing_date):'—'}</td>
-    <td style="font-size:.8rem;color:var(--muted)">${esc(c.purpose_name||'—')}</td>
-    <td>${daysChip(c.next_hearing_date)}</td>
-    <td><button class="prev-btn" onclick="openPreview(${i})">Preview</button></td>
-  </tr>`).join('');
+  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="11">No cases match.</td></tr>'; return; }
+  tbody.innerHTML=rows.map((c,i)=>{
+    const nContacts=(c.case_contacts||[]).length;
+    const contactBadge=nContacts
+      ?`<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:700">${nContacts} linked</span>`
+      :`<span style="background:#fdecea;color:#c62828;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:700">None</span>`;
+    return `<tr>
+      <td style="color:#888;font-size:.78rem">${i+1}</td>
+      <td><span class="cino-link">${esc(c.cino)}</span></td>
+      <td><span class="case-ref">${esc(c.reference||c.title||c.cino)}</span></td>
+      <td><span class="party-main">${partyName(c.petitioners)}</span></td>
+      <td><span class="party-main">${partyName(c.respondents)}</span></td>
+      <td style="font-size:.8rem;color:var(--muted);max-width:180px">${esc(c.court_name||'—')}</td>
+      <td style="white-space:nowrap;font-size:.82rem">${c.next_hearing_date?fmtDate(c.next_hearing_date):'—'}</td>
+      <td style="font-size:.8rem;color:var(--muted)">${esc(c.purpose_name||'—')}</td>
+      <td>${daysChip(c.next_hearing_date)}</td>
+      <td>${contactBadge}</td>
+      <td style="white-space:nowrap;display:flex;gap:6px">
+        <button class="link-btn" onclick="openLinkModal('${esc(c.cino)}','${esc(c.reference||c.title||c.cino)}')">+ Link</button>
+        <button class="prev-btn" onclick="openPreview(${i})">Preview</button>
+      </td>
+    </tr>`;
+  }).join('');
   // store filtered rows for preview lookup
   window._filteredCases=rows;
 }
@@ -555,6 +603,46 @@ function applyRemFilter(){
   }).join('');
 }
 
+// ── Link Contact Modal ────────────────────────────────────────────────────
+let _linkCino = '';
+function openLinkModal(cino, label){
+  _linkCino = cino;
+  document.getElementById('linkModalMeta').textContent = cino + (label && label!==cino ? ' · '+label : '');
+  document.getElementById('linkName').value = '';
+  document.getElementById('linkPhone').value = '';
+  document.getElementById('linkResult').className = 'add-result';
+  document.getElementById('linkResult').textContent = '';
+  document.getElementById('linkModalBackdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(()=>document.getElementById('linkName').focus(), 100);
+}
+function closeLinkModal(e){
+  if(e && e.target !== document.getElementById('linkModalBackdrop')) return;
+  document.getElementById('linkModalBackdrop').classList.remove('open');
+  document.body.style.overflow = '';
+}
+async function submitLink(){
+  const phone = document.getElementById('linkPhone').value.trim();
+  const name  = document.getElementById('linkName').value.trim();
+  if(!phone){ document.getElementById('linkResult').className='add-result err'; document.getElementById('linkResult').textContent='Phone number is required.'; return; }
+  const btn = document.getElementById('linkBtn');
+  btn.textContent = 'Linking…'; btn.disabled = true;
+  try{
+    const r = await fetch(`/cases/${encodeURIComponent(_linkCino)}/link`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ phone, name: name||undefined })
+    });
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error||'Server error');
+    document.getElementById('linkResult').className = 'add-result ok';
+    document.getElementById('linkResult').textContent = `✓ ${j.phone} linked. Reminders scheduled if hearing date is set.`;
+    loadCases(); loadStats();
+  }catch(e){
+    document.getElementById('linkResult').className = 'add-result err';
+    document.getElementById('linkResult').textContent = 'Error: '+e.message;
+  }finally{ btn.textContent = 'Link & Schedule Reminders'; btn.disabled = false; }
+}
+
 // ── Add Cases Modal ───────────────────────────────────────────────────────
 function openAddModal(){
   document.getElementById('cnrInput').value='';
@@ -586,6 +674,24 @@ async function submitCnrs(){
     document.getElementById('addResult').className='add-result err';
     document.getElementById('addResult').textContent='Error: '+e.message;
   }finally{ btn.textContent='Add to Database'; btn.disabled=false; }
+}
+
+// ── Contact Picker API (Android Chrome / supported browsers) ─────────────
+async function pickContact(){
+  try{
+    const contacts = await navigator.contacts.select(['name','tel'],{multiple:false});
+    if(!contacts||!contacts.length) return;
+    const c = contacts[0];
+    if(c.name&&c.name[0])  document.getElementById('linkName').value  = c.name[0];
+    if(c.tel &&c.tel[0])   document.getElementById('linkPhone').value = c.tel[0].replace(/\s+/g,'');
+  }catch(e){ console.warn('Contact picker:', e.message); }
+}
+// Show picker button only if the API is available
+if('contacts' in navigator && 'select' in navigator.contacts){
+  document.addEventListener('DOMContentLoaded',()=>{
+    const btn = document.getElementById('contactPickerBtn');
+    if(btn) btn.style.display='';
+  });
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────

@@ -1213,6 +1213,44 @@ app.post('/cases/:cino/contact', async (req, res) => {
   }
 });
 
+// POST /cases/:cino/link — link a phone number to a case from the dashboard (no admin token needed)
+// Body: { phone, name? }   phone accepts 10-digit or E.164 (+91XXXXXXXXXX)
+app.post('/cases/:cino/link', async (req, res) => {
+  try {
+    const cino = req.params.cino?.trim().toUpperCase();
+    let { phone, name } = req.body;
+    if (!phone) return res.status(400).json({ error: 'phone is required' });
+
+    // Normalise to E.164 — assume India (+91) for 10-digit numbers
+    phone = String(phone).replace(/\D/g, '');
+    if (phone.length === 10) phone = '+91' + phone;
+    else if (phone.length === 12 && phone.startsWith('91')) phone = '+' + phone;
+    else if (!phone.startsWith('+')) phone = '+' + phone;
+    if (!/^\+\d{10,15}$/.test(phone))
+      return res.status(400).json({ error: 'Invalid phone number. Use 10-digit mobile or +91XXXXXXXXXX.' });
+
+    const { data: caseRow } = await supabase.from('cases').select('*').eq('cino', cino).maybeSingle();
+    if (!caseRow) return res.status(404).json({ error: `Case ${cino} not found.` });
+
+    const { data: contact, error: cErr } = await supabase
+      .from('client_contacts')
+      .upsert({ phone_e164: phone, name: name || null, updated_at: nowIso() }, { onConflict: 'phone_e164' })
+      .select('id, name').single();
+    if (cErr) throw cErr;
+
+    const { error: linkErr } = await supabase.from('case_contacts').upsert(
+      { cino, client_contact_id: contact.id, role: 'petitioner', updated_at: nowIso() },
+      { onConflict: 'cino,client_contact_id' }
+    );
+    if (linkErr) throw linkErr;
+
+    await scheduleRemindersForContact(cino, caseRow, phone, contact.name);
+    return res.json({ ok: true, phone, name: contact.name });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /cases/bulk — insert CNR stubs (no API call; cron fills details later)
 app.post('/cases/bulk', async (req, res) => {
   try {
