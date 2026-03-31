@@ -1239,10 +1239,10 @@ app.post('/cases/bulk', async (req, res) => {
 // GET /cases — list cases ordered by next hearing date
 app.get('/cases', async (_req, res) => {
   try {
-    // Fetch cases without relational join first (avoids FK-not-defined errors)
+    // Select all columns — avoids 500s when optional columns don't exist in the schema
     const { data: cases, error: cErr } = await supabase
       .from('cases')
-      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, stage_name, last_synced_at, petitioners, respondents')
+      .select('*')
       .order('next_hearing_date', { ascending: true, nullsFirst: false })
       .limit(200);
     if (cErr) throw cErr;
