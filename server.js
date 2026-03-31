@@ -1239,13 +1239,25 @@ app.post('/cases/bulk', async (req, res) => {
 // GET /cases — list cases ordered by next hearing date
 app.get('/cases', async (_req, res) => {
   try {
-    const { data, error } = await supabase
+    // Fetch cases without relational join first (avoids FK-not-defined errors)
+    const { data: cases, error: cErr } = await supabase
       .from('cases')
-      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, stage_name, last_synced_at, petitioners, respondents, case_contacts(client_contact_id)')
+      .select('cino, reference, title, case_status, case_type, next_hearing_date, court_name, purpose_name, stage_name, last_synced_at, petitioners, respondents')
       .order('next_hearing_date', { ascending: true, nullsFirst: false })
       .limit(200);
-    if (error) throw error;
-    return res.json({ cases: data || [] });
+    if (cErr) throw cErr;
+
+    // Fetch case_contacts separately and attach
+    const { data: contacts } = await supabase
+      .from('case_contacts')
+      .select('cino, client_contact_id');
+    const contactsByCino = {};
+    (contacts || []).forEach(r => {
+      if (!contactsByCino[r.cino]) contactsByCino[r.cino] = [];
+      contactsByCino[r.cino].push({ client_contact_id: r.client_contact_id });
+    });
+    const enriched = (cases || []).map(c => ({ ...c, case_contacts: contactsByCino[c.cino] || [] }));
+    return res.json({ cases: enriched });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
