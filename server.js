@@ -1213,6 +1213,29 @@ app.post('/cases/:cino/contact', async (req, res) => {
   }
 });
 
+// POST /cases/bulk — insert CNR stubs (no API call; cron fills details later)
+app.post('/cases/bulk', async (req, res) => {
+  try {
+    const cnrs = (req.body?.cnrs || [])
+      .map(c => String(c).trim().toUpperCase())
+      .filter(c => c.length > 4);
+    if (!cnrs.length) return res.status(400).json({ error: 'No valid CNRs provided' });
+
+    let inserted = 0, skipped = 0;
+    for (const cino of cnrs) {
+      const { error } = await supabase.from('cases').insert({
+        cino, case_status: 'open', updated_at: nowIso(),
+      });
+      if (error?.code === '23505') skipped++;   // unique violation = already exists
+      else if (error) console.error(`[BULK] insert ${cino}:`, error.message);
+      else inserted++;
+    }
+    return res.json({ inserted, skipped });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /cases — list cases ordered by next hearing date
 app.get('/cases', async (_req, res) => {
   try {

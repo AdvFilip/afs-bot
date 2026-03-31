@@ -127,7 +127,16 @@
     .copy-btn.copied { background: var(--green); }
     .no-num-btn  { padding: 8px 18px; background: #eceff1; color: #546e7a; border: none; border-radius: var(--radius); font-size: .8rem; font-weight: 700; cursor: default; }
 
-    /* SPINNER */
+    .hbtn-add  { background: var(--green); color: #fff; }
+
+    /* ADD CASES MODAL */
+    .add-modal { max-width: 500px; }
+    .add-textarea { width: 100%; height: 180px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: var(--radius); font-family: monospace; font-size: .85rem; resize: vertical; outline: none; }
+    .add-textarea:focus { border-color: var(--gold); }
+    .add-hint { font-size: .75rem; color: var(--muted); margin-top: 6px; }
+    .add-result { margin-top: 12px; font-size: .82rem; padding: 10px 12px; border-radius: var(--radius); display: none; }
+    .add-result.ok  { background: #e8f5e9; color: #2e7d32; display: block; }
+    .add-result.err { background: #fdecea; color: #c62828; display: block; }
     .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: var(--gold); border-radius: 50%; animation: sp .7s linear infinite; vertical-align: middle; }
     @keyframes sp { to { transform: rotate(360deg); } }
 
@@ -168,6 +177,7 @@
   </div>
   <div class="hdr-right">
     <div id="waStatus"><div class="wa-dot" id="waDot"></div><span id="waLabel">WA</span></div>
+    <button class="hbtn hbtn-add" onclick="openAddModal()">+ Add Cases</button>
     <button class="hbtn hbtn-refresh" onclick="refreshAll()">↻ Refresh</button>
     <button class="hbtn hbtn-qr" onclick="location.href='/wa/qr'">QR</button>
   </div>
@@ -252,6 +262,25 @@
     </div>
   </div>
 </main>
+
+<!-- ADD CASES MODAL -->
+<div class="modal-backdrop" id="addModalBackdrop" onclick="closeAddModal(event)">
+  <div class="modal add-modal">
+    <div class="modal-hdr">
+      <button class="modal-close" onclick="closeAddModal()">&times;</button>
+      <h2>Add Cases to DB</h2>
+      <div class="meta">Paste CNR numbers — one per line. The nightly cron will fetch full details automatically.</div>
+    </div>
+    <div class="modal-body">
+      <textarea class="add-textarea" id="cnrInput" placeholder="TNTP010017352023&#10;TNTP050007832023&#10;TNTP0XXXXXXXXXXXX"></textarea>
+      <div class="add-hint">Each line = one CNR. Duplicates are safely ignored.</div>
+      <div class="add-result" id="addResult"></div>
+      <div class="msg-actions" style="margin-top:14px">
+        <button class="copy-btn" id="addBtn" onclick="submitCnrs()">Add to Database</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- PREVIEW MODAL -->
 <div class="modal-backdrop" id="modalBackdrop" onclick="closeModal(event)">
@@ -524,6 +553,39 @@ function applyRemFilter(){
       <td>${badgeRem(r.status)}</td>
     </tr>`;
   }).join('');
+}
+
+// ── Add Cases Modal ───────────────────────────────────────────────────────
+function openAddModal(){
+  document.getElementById('cnrInput').value='';
+  document.getElementById('addResult').className='add-result';
+  document.getElementById('addResult').textContent='';
+  document.getElementById('addModalBackdrop').classList.add('open');
+  document.body.style.overflow='hidden';
+  setTimeout(()=>document.getElementById('cnrInput').focus(),100);
+}
+function closeAddModal(e){
+  if(e&&e.target!==document.getElementById('addModalBackdrop')) return;
+  document.getElementById('addModalBackdrop').classList.remove('open');
+  document.body.style.overflow='';
+}
+async function submitCnrs(){
+  const raw=document.getElementById('cnrInput').value;
+  const cnrs=raw.split(/[\n,]+/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>4);
+  if(!cnrs.length){ document.getElementById('addResult').className='add-result err'; document.getElementById('addResult').textContent='No valid CNR numbers found.'; return; }
+  const btn=document.getElementById('addBtn');
+  btn.textContent='Adding…'; btn.disabled=true;
+  try{
+    const r=await fetch('/cases/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cnrs})});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'Server error');
+    document.getElementById('addResult').className='add-result ok';
+    document.getElementById('addResult').textContent=`✓ ${j.inserted} case(s) added. ${j.skipped} already existed. Nightly cron will fetch full details.`;
+    loadCases(); loadStats();
+  }catch(e){
+    document.getElementById('addResult').className='add-result err';
+    document.getElementById('addResult').textContent='Error: '+e.message;
+  }finally{ btn.textContent='Add to Database'; btn.disabled=false; }
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────
