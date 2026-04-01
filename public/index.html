@@ -252,9 +252,9 @@
       <div class="stat-hdr"><div class="stat-dot yellow"></div><div class="stat-label">In 3 Days</div></div>
       <div class="stat-value yellow" id="statIn3">—</div>
     </div>
-    <div class="stat-card">
-      <div class="stat-hdr"><div class="stat-dot empty"></div><div class="stat-label">Missing Numbers</div></div>
-      <div class="stat-value dark" id="statMissing">—</div>
+    <div class="stat-card" style="cursor:pointer" onclick="setCaseFilter('awaiting',document.querySelector('.ftab[data-f=awaiting]'))">
+      <div class="stat-hdr"><div class="stat-dot" style="background:#7f8c8d"></div><div class="stat-label">Awaiting Date</div></div>
+      <div class="stat-value" style="color:#5d6d7e" id="statAwaiting">—</div>
     </div>
   </div>
 
@@ -262,12 +262,20 @@
   <div class="page-sec active" id="page-cases">
     <div class="toolbar">
       <div class="ftabs">
-        <button class="ftab active" onclick="setCaseFilter('due',this)">All Due</button>
-        <button class="ftab" onclick="setCaseFilter('today',this)">Today</button>
-        <button class="ftab" onclick="setCaseFilter('tomorrow',this)">Tomorrow</button>
-        <button class="ftab" onclick="setCaseFilter('3days',this)">3 Days</button>
-        <button class="ftab" onclick="setCaseFilter('missing',this)">Missing Numbers</button>
-        <button class="ftab" onclick="setCaseFilter('all',this)">All Cases</button>
+        <button class="ftab active" data-f="all_open" onclick="setCaseFilter('all_open',this)">All Open</button>
+        <button class="ftab" data-f="today" onclick="setCaseFilter('today',this)">Today</button>
+        <button class="ftab" data-f="tomorrow" onclick="setCaseFilter('tomorrow',this)">Tomorrow</button>
+        <button class="ftab" data-f="3days" onclick="setCaseFilter('3days',this)">3 Days</button>
+        <button class="ftab" data-f="upcoming" onclick="setCaseFilter('upcoming',this)">Upcoming</button>
+        <button class="ftab" data-f="awaiting" onclick="setCaseFilter('awaiting',this)">⏳ Awaiting</button>
+        <button class="ftab" data-f="missing" onclick="setCaseFilter('missing',this)">Missing No.</button>
+        <button class="ftab" data-f="all" onclick="setCaseFilter('all',this)">All Cases</button>
+      </div>
+      <!-- Bulk sync toolbar (visible when rows selected) -->
+      <div id="bulkBar" style="display:none;align-items:center;gap:10px;padding:8px 12px;background:#e8f4fd;border:1px solid #bee3f8;border-radius:6px;margin-top:8px;flex-wrap:wrap">
+        <span id="bulkCount" style="font-size:.82rem;font-weight:700;color:#1565c0"></span>
+        <button class="hbtn hbtn-sync" style="font-size:.75rem;padding:6px 14px" onclick="syncSelected()">⟳ Sync Selected</button>
+        <button class="hbtn" style="font-size:.75rem;padding:6px 14px;background:#546e7a;color:#fff" onclick="clearSelection()">✕ Clear</button>
       </div>
       <input type="search" class="search-box" id="caseSearch" placeholder="Search case, party, court…" oninput="applyCaseFilter()" />
     </div>
@@ -275,7 +283,8 @@
       <table>
         <thead>
           <tr>
-            <th>#</th><th>CINO</th><th>Case</th><th>Petitioner</th>
+            <th><input type="checkbox" id="selectAll" onclick="toggleSelectAll(this)" title="Select all"></th>
+            <th>CINO</th><th>Case</th><th>Petitioner</th>
             <th>Respondent</th><th>Court</th><th>Hearing Date</th>
             <th>Purpose</th><th>Days</th><th>Contacts</th><th>Actions</th>
           </tr>
@@ -416,12 +425,12 @@ const tomorrowStr = new Date(Date.now()+86400000).toISOString().split('T')[0];
 const in3DaysStr  = new Date(Date.now()+3*86400000).toISOString().split('T')[0];
 
 function daysChip(d){
-  if(!d) return '<span class="days-chip days-future">—</span>';
+  if(!d) return '<span class="days-chip" style="background:#ecf0f1;color:#7f8c8d">Not Set</span>';
   if(d===todayStr)    return '<span class="days-chip days-today">Today</span>';
   if(d===tomorrowStr) return '<span class="days-chip days-tomorrow">Tomorrow</span>';
   if(d===in3DaysStr)  return '<span class="days-chip days-3days">3 Days</span>';
   const diff = Math.ceil((new Date(d)-new Date(todayStr))/86400000);
-  if(diff<0)  return `<span class="days-chip days-past">${Math.abs(diff)}d ago</span>`;
+  if(diff<0)  return `<span class="days-chip" style="background:#eaf0fb;color:#2471a3" title="Last hearing ${fmtDate(d)} — awaiting next date from court">⏳ Awaiting</span>`;
   if(diff<=7) return `<span class="days-chip days-future">${diff} days</span>`;
   return `<span class="days-chip days-future">${fmtDate(d)}</span>`;
 }
@@ -447,7 +456,8 @@ function dLeftPill(ts){
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
-let allCases=[], allReminders=[], caseFilter='due', remFilter='all';
+let allCases=[], allReminders=[], caseFilter='all_open', remFilter='all';
+const selectedCinos = new Set();
 
 // ── Page switch ────────────────────────────────────────────────────────────
 function switchPage(name, btn){
@@ -462,10 +472,10 @@ function switchPage(name, btn){
 async function loadStats(){
   try{
     const s=await(await fetch('/api/stats')).json();
-    document.getElementById('statToday').textContent   = s.today           ?? '—';
-    document.getElementById('statTomorrow').textContent= s.tomorrow         ?? '—';
-    document.getElementById('statIn3').textContent     = s.in_3_days        ?? '—';
-    document.getElementById('statMissing').textContent = s.missing_numbers  ?? '—';
+    document.getElementById('statToday').textContent    = s.today           ?? '—';
+    document.getElementById('statTomorrow').textContent = s.tomorrow        ?? '—';
+    document.getElementById('statIn3').textContent      = s.in_3_days       ?? '—';
+    document.getElementById('statAwaiting').textContent = s.awaiting_date   ?? '—';
   }catch{}
 }
 
@@ -525,12 +535,16 @@ function applyCaseFilter(){
   const q=document.getElementById('caseSearch').value.toLowerCase().trim();
   const rows=allCases.filter(c=>{
     const hasContacts=(c.case_contacts||[]).length>0;
+    const isPast = c.next_hearing_date && c.next_hearing_date < todayStr;
+    const isAwaiting = !c.next_hearing_date || isPast;
     if(q&&!`${c.cino} ${c.reference||''} ${c.title||''} ${c.court_name||''} ${partyName(c.petitioners)} ${partyName(c.respondents)}`.toLowerCase().includes(q)) return false;
     if(caseFilter==='today')    return c.next_hearing_date===todayStr;
     if(caseFilter==='tomorrow') return c.next_hearing_date===tomorrowStr;
     if(caseFilter==='3days')    return c.next_hearing_date===in3DaysStr;
+    if(caseFilter==='upcoming') return c.case_status==='open'&&c.next_hearing_date&&c.next_hearing_date>todayStr;
+    if(caseFilter==='awaiting') return c.case_status==='open'&&isAwaiting;
     if(caseFilter==='missing')  return c.case_status==='open'&&!hasContacts;
-    if(caseFilter==='due')      return c.case_status==='open'&&c.next_hearing_date&&c.next_hearing_date>=todayStr;
+    if(caseFilter==='all_open') return c.case_status==='open';
     return true; // 'all'
   });
   renderCases(rows);
@@ -538,14 +552,15 @@ function applyCaseFilter(){
 
 function renderCases(rows){
   const tbody=document.getElementById('casesBody');
-  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="11">No cases match.</td></tr>'; return; }
+  if(!rows.length){ tbody.innerHTML='<tr class="no-rows"><td colspan="11">No cases match.</td></tr>'; updateBulkBar(); return; }
   tbody.innerHTML=rows.map((c,i)=>{
     const nContacts=(c.case_contacts||[]).length;
     const contactBadge=nContacts
       ?`<span style="background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:700">${nContacts} linked</span>`
       :`<span style="background:#fdecea;color:#c62828;padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:700">None</span>`;
+    const chk=selectedCinos.has(c.cino)?'checked':'';
     return `<tr>
-      <td style="color:#888;font-size:.78rem">${i+1}</td>
+      <td><input type="checkbox" ${chk} onchange="toggleRow('${esc(c.cino)}',this)"></td>
       <td><span class="cino-link">${esc(c.cino)}</span></td>
       <td><span class="case-ref">${esc(c.reference||c.title||c.cino)}</span></td>
       <td><span class="party-main">${partyName(c.petitioners)}</span></td>
@@ -561,8 +576,54 @@ function renderCases(rows){
       </td>
     </tr>`;
   }).join('');
-  // store filtered rows for preview lookup
   window._filteredCases=rows;
+  updateBulkBar();
+  // sync select-all checkbox state
+  const sa=document.getElementById('selectAll');
+  if(sa) sa.checked=rows.length>0&&rows.every(c=>selectedCinos.has(c.cino));
+}
+
+// ── Row selection & bulk sync ─────────────────────────────────────────────
+function toggleRow(cino, cb){
+  if(cb.checked) selectedCinos.add(cino); else selectedCinos.delete(cino);
+  updateBulkBar();
+  const rows=window._filteredCases||[];
+  const sa=document.getElementById('selectAll');
+  if(sa) sa.checked=rows.length>0&&rows.every(c=>selectedCinos.has(c.cino));
+}
+function toggleSelectAll(cb){
+  const rows=window._filteredCases||[];
+  rows.forEach(c=>{ if(cb.checked) selectedCinos.add(c.cino); else selectedCinos.delete(c.cino); });
+  document.querySelectorAll('#casesBody input[type=checkbox]').forEach(c=>c.checked=cb.checked);
+  updateBulkBar();
+}
+function clearSelection(){
+  selectedCinos.clear();
+  document.querySelectorAll('#casesBody input[type=checkbox]').forEach(c=>c.checked=false);
+  const sa=document.getElementById('selectAll'); if(sa) sa.checked=false;
+  updateBulkBar();
+}
+function updateBulkBar(){
+  const bar=document.getElementById('bulkBar');
+  const n=selectedCinos.size;
+  bar.style.display=n>0?'flex':'none';
+  document.getElementById('bulkCount').textContent=`${n} case(s) selected`;
+}
+async function syncSelected(){
+  if(!selectedCinos.size) return;
+  const cnrs=[...selectedCinos];
+  const btn=document.querySelector('#bulkBar .hbtn-sync');
+  btn.textContent='Syncing…'; btn.disabled=true;
+  try{
+    const r=await fetch('/sync/cases',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cnrs})});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'Server error');
+    const ok=j.results?.filter(x=>x.status==='ok').length??0;
+    const fail=j.results?.filter(x=>x.status==='error').length??0;
+    alert(`✓ Synced ${ok} case(s).${fail?' '+fail+' failed — check server logs.':''}`);
+    clearSelection(); refreshAll();
+  }catch(e){ alert('Sync error: '+e.message); }
+  finally{ btn.textContent='⟳ Sync Selected'; btn.disabled=false; }
 }
 
 // ── Preview modal ──────────────────────────────────────────────────────────

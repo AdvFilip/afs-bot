@@ -1368,7 +1368,7 @@ app.get('/api/stats', async (_req, res) => {
     const tomorrowStr = new Date(Date.now() + 1 * 86400000).toISOString().split('T')[0];
     const in3DaysStr  = new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
 
-    const [todayQ, tomorrowQ, in3Q, openCinosQ, withContactsQ, pendingQ] = await Promise.all([
+    const [todayQ, tomorrowQ, in3Q, openCinosQ, withContactsQ, pendingQ, awaitingQ] = await Promise.all([
       supabase.from('cases').select('cino', { count: 'exact', head: true })
         .eq('case_status', 'open').eq('next_hearing_date', todayStr),
       supabase.from('cases').select('cino', { count: 'exact', head: true })
@@ -1379,6 +1379,9 @@ app.get('/api/stats', async (_req, res) => {
       supabase.from('case_contacts').select('cino'),
       supabase.from('reminders').select('id', { count: 'exact', head: true })
         .in('status', ['pending', 'retrying']),
+      supabase.from('cases').select('cino', { count: 'exact', head: true })
+        .eq('case_status', 'open')
+        .or(`next_hearing_date.is.null,next_hearing_date.lt.${todayStr}`),
     ]);
 
     const cinosWithContacts = new Set((withContactsQ.data || []).map(r => r.cino));
@@ -1390,6 +1393,7 @@ app.get('/api/stats', async (_req, res) => {
       in_3_days:         in3Q.count      ?? 0,
       missing_numbers:   missingNumbers,
       pending_reminders: pendingQ.count  ?? 0,
+      awaiting_date:     awaitingQ.count ?? 0,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
