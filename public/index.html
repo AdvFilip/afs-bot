@@ -615,13 +615,12 @@ async function syncSelected(){
   const btn=document.querySelector('#bulkBar .hbtn-sync');
   btn.textContent='Syncing…'; btn.disabled=true;
   try{
-    const r=await fetch('/sync/cases',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cnrs})});
+    const r=await fetch('/sync/cases/all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cnrs})});
     const j=await r.json();
     if(!r.ok) throw new Error(j.error||'Server error');
-    const ok=j.results?.filter(x=>x.status==='ok').length??0;
-    const fail=j.results?.filter(x=>x.status==='error').length??0;
-    alert(`✓ Synced ${ok} case(s).${fail?' '+fail+' failed — check server logs.':''}`);
-    clearSelection(); refreshAll();
+    alert(`✓ ${j.message}\nEstimated cost: ${j.estimated_credits} credits.\n\nTable will refresh in a moment.`);
+    clearSelection();
+    setTimeout(()=>refreshAll(), 4000); // give background sync a head start
   }catch(e){ alert('Sync error: '+e.message); }
   finally{ btn.textContent='⟳ Sync Selected'; btn.disabled=false; }
 }

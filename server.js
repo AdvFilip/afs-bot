@@ -1144,24 +1144,28 @@ app.get('/sync/cases/status', async (req, res) => {
   }
 });
 
-// POST /sync/cases/all — sync ALL open cases from eCourts API (one-shot catch-up)
-// Runs in background; returns immediately with job info.
+// POST /sync/cases/all — sync ALL open cases (or specific CNRs) from eCourts API
+// Accepts optional body: { cnrs: ["CINO1","CINO2"] } to sync specific cases only.
 app.post('/sync/cases/all', async (req, res) => {
   if (!ECOURTS_API_KEY) return res.status(503).json({ error: 'ECOURTS_API_KEY not configured' });
   try {
-    const { data: all, error } = await supabase
-      .from('cases')
-      .select('cino')
-      .eq('case_status', 'open');
-    if (error) return res.status(500).json({ error: error.message });
+    let cnrs;
+    if (Array.isArray(req.body?.cnrs) && req.body.cnrs.length) {
+      // Selective sync — only the requested CNRs
+      cnrs = req.body.cnrs.map(s => String(s).trim().toUpperCase()).filter(Boolean);
+    } else {
+      // Full sync — all open cases
+      const { data: all, error } = await supabase.from('cases').select('cino').eq('case_status', 'open');
+      if (error) return res.status(500).json({ error: error.message });
+      cnrs = (all || []).map(c => c.cino);
+    }
 
-    const cnrs = (all || []).map(c => c.cino);
-    if (!cnrs.length) return res.json({ message: 'No open cases to sync.', synced: 0 });
+    if (!cnrs.length) return res.json({ message: 'No cases to sync.', synced: 0 });
 
     // Kick off in background
     (async () => {
       let ok = 0, failed = 0;
-      console.log(`[SYNC][all] Starting full sync of ${cnrs.length} open cases…`);
+      console.log(`[SYNC][all] Starting sync of ${cnrs.length} case(s)…`);
       for (const cnr of cnrs) {
         try { await syncOneCnr(cnr); ok++; }
         catch (e) { console.error(`[SYNC][all] Failed ${cnr}:`, e.message); failed++; }
@@ -1171,7 +1175,7 @@ app.post('/sync/cases/all', async (req, res) => {
     })().catch(e => console.error('[SYNC][all] bg error:', e.message));
 
     return res.json({
-      message: `Sync started for ${cnrs.length} case(s) in background. Check server logs for progress.`,
+      message: `Sync started for ${cnrs.length} case(s) in background.`,
       total: cnrs.length,
       estimated_credits: (cnrs.length * 1.5).toFixed(1),
     });
