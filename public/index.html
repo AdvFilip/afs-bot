@@ -41,6 +41,7 @@
     .hbtn:hover { opacity: .85; }
     .hbtn-refresh { background: var(--gold); color: #fff; }
     .hbtn-add     { background: var(--green); color: #fff; }
+    .hbtn-sync    { background: #1565c0; color: #fff; }
     .hbtn-qr      { background: transparent; border: 1px solid #555; color: #ccc; }
     #waStatus { display: flex; align-items: center; gap: 4px; font-size: .7rem; color: #aaa; }
     .wa-dot { width: 7px; height: 7px; border-radius: 50%; background: #666; flex-shrink: 0; }
@@ -224,8 +225,9 @@
   </div>
   <div class="hdr-right">
     <div id="waStatus"><div class="wa-dot" id="waDot"></div><span id="waLabel">WA</span></div>
-    <button class="hbtn hbtn-add" onclick="openAddModal()">+ Add Cases</button>
-    <button class="hbtn hbtn-refresh" onclick="refreshAll()">↻ Refresh</button>
+    <button class="hbtn hbtn-sync" onclick="openSyncModal()">⟳ eCourts</button>
+    <button class="hbtn hbtn-add" onclick="openAddModal()">+ Add</button>
+    <button class="hbtn hbtn-refresh" onclick="refreshAll()">↻</button>
     <button class="hbtn hbtn-qr" onclick="location.href='/wa/qr'">QR</button>
   </div>
 </header>
@@ -353,6 +355,31 @@
       <div class="add-result" id="addResult"></div>
       <div class="msg-actions" style="margin-top:14px">
         <button class="copy-btn" id="addBtn" onclick="submitCnrs()">Add to Database</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SYNC MODAL -->
+<div class="modal-backdrop" id="syncModalBackdrop" onclick="closeSyncModal(event)">
+  <div class="modal">
+    <div class="modal-hdr">
+      <button class="modal-close" onclick="closeSyncModal()">&times;</button>
+      <h2>Sync Cases from eCourts</h2>
+      <div class="meta">Fetch latest hearing dates for all open cases</div>
+    </div>
+    <div class="modal-body">
+      <div id="syncStatus" style="font-size:.9rem;line-height:1.7;padding:8px 0">
+        <span class="spin"></span> Checking cases…
+      </div>
+      <div class="add-result" id="syncResult"></div>
+      <div class="msg-actions" style="margin-top:16px">
+        <button class="copy-btn" id="syncBtn" onclick="triggerSync()" disabled style="background:var(--blue)">
+          Sync All Cases
+        </button>
+      </div>
+      <div style="font-size:.74rem;color:var(--muted);margin-top:10px">
+        ⚠️ Each case costs <strong>1.5 credits</strong> from your eCourts API balance. Runs in background — safe to close this window.
       </div>
     </div>
   </div>
@@ -728,6 +755,61 @@ async function pickContact(){
     if(c.tel &&c.tel[0])   document.getElementById('linkPhone').value = c.tel[0].replace(/\s+/g,'');
   }catch(e){
     if(e.name!=='AbortError') alert('Could not open contacts: '+e.message);
+  }
+}
+
+// ── Sync Modal ────────────────────────────────────────────────────────────
+async function openSyncModal(){
+  document.getElementById('syncResult').className='add-result';
+  document.getElementById('syncResult').textContent='';
+  document.getElementById('syncBtn').disabled=true;
+  document.getElementById('syncStatus').innerHTML='<span class="spin"></span> Checking cases…';
+  document.getElementById('syncModalBackdrop').classList.add('open');
+  document.body.style.overflow='hidden';
+  try{
+    const j=await(await fetch('/sync/cases/status')).json();
+    const rows=j.cases||[];
+    const neverSynced=rows.filter(c=>!c.last_synced_at);
+    const synced=rows.filter(c=>c.last_synced_at);
+    let html=`<strong>${j.total_open} open case(s)</strong> in database<br>`;
+    html+=`• ${neverSynced.length} never synced yet<br>`;
+    html+=`• ${synced.length} previously synced (will re-fetch)<br>`;
+    html+=`<br><strong>Estimated cost: ${j.estimated_credits} credits</strong>`;
+    if(rows.length){
+      html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:.8rem;color:var(--muted)">View all CNRs</summary>`;
+      html+=`<div style="font-family:monospace;font-size:.74rem;margin-top:6px;line-height:1.8">${rows.map(c=>`${esc(c.cino)} ${c.last_synced_at?'<span style="color:var(--green)">✓</span>':'<span style="color:var(--orange)">new</span>'}`).join('<br>')}</div></details>`;
+    }
+    document.getElementById('syncStatus').innerHTML=html;
+    if(j.total_open>0){
+      document.getElementById('syncBtn').disabled=false;
+      document.getElementById('syncBtn').textContent=`Sync ${j.total_open} Case(s) — ${j.estimated_credits} credits`;
+    } else {
+      document.getElementById('syncBtn').textContent='No cases to sync';
+    }
+  }catch(e){
+    document.getElementById('syncStatus').innerHTML=`<span style="color:var(--red)">Error: ${esc(e.message)}</span>`;
+  }
+}
+function closeSyncModal(e){
+  if(e&&e.target!==document.getElementById('syncModalBackdrop')) return;
+  document.getElementById('syncModalBackdrop').classList.remove('open');
+  document.body.style.overflow='';
+}
+async function triggerSync(){
+  const btn=document.getElementById('syncBtn');
+  btn.disabled=true; btn.textContent='Starting sync…';
+  try{
+    const r=await fetch('/sync/cases/all',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const j=await r.json();
+    if(!r.ok) throw new Error(j.error||'Server error');
+    document.getElementById('syncResult').className='add-result ok';
+    document.getElementById('syncResult').textContent=`✓ ${j.message}`;
+    btn.textContent='Sync Running…';
+    setTimeout(()=>{ refreshAll(); },3000);
+  }catch(e){
+    document.getElementById('syncResult').className='add-result err';
+    document.getElementById('syncResult').textContent='Error: '+e.message;
+    btn.disabled=false; btn.textContent='Retry';
   }
 }
 

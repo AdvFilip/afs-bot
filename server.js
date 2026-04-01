@@ -1120,6 +1120,66 @@ app.post('/sync/cases', async (req, res) => {
   }
 });
 
+// GET /sync/cases/status — preview how many cases need syncing (no API calls, no credits)
+app.get('/sync/cases/status', async (req, res) => {
+  try {
+    const { data: all, error } = await supabase
+      .from('cases')
+      .select('cino, last_synced_at, next_hearing_date')
+      .eq('case_status', 'open');
+    if (error) return res.status(500).json({ error: error.message });
+
+    const total = (all || []).length;
+    const neverSynced = (all || []).filter(c => !c.last_synced_at).length;
+    const synced = total - neverSynced;
+    return res.json({
+      total_open: total,
+      never_synced: neverSynced,
+      already_synced: synced,
+      estimated_credits: (total * 1.5).toFixed(1),
+      cases: (all || []).map(c => ({ cino: c.cino, last_synced_at: c.last_synced_at, next_hearing_date: c.next_hearing_date })),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /sync/cases/all — sync ALL open cases from eCourts API (one-shot catch-up)
+// Runs in background; returns immediately with job info.
+app.post('/sync/cases/all', async (req, res) => {
+  if (!ECOURTS_API_KEY) return res.status(503).json({ error: 'ECOURTS_API_KEY not configured' });
+  try {
+    const { data: all, error } = await supabase
+      .from('cases')
+      .select('cino')
+      .eq('case_status', 'open');
+    if (error) return res.status(500).json({ error: error.message });
+
+    const cnrs = (all || []).map(c => c.cino);
+    if (!cnrs.length) return res.json({ message: 'No open cases to sync.', synced: 0 });
+
+    // Kick off in background
+    (async () => {
+      let ok = 0, failed = 0;
+      console.log(`[SYNC][all] Starting full sync of ${cnrs.length} open cases…`);
+      for (const cnr of cnrs) {
+        try { await syncOneCnr(cnr); ok++; }
+        catch (e) { console.error(`[SYNC][all] Failed ${cnr}:`, e.message); failed++; }
+        await new Promise(r => setTimeout(r, 400));
+      }
+      console.log(`[SYNC][all] Done. ok=${ok} failed=${failed}`);
+    })().catch(e => console.error('[SYNC][all] bg error:', e.message));
+
+    return res.json({
+      message: `Sync started for ${cnrs.length} case(s) in background. Check server logs for progress.`,
+      total: cnrs.length,
+      estimated_credits: (cnrs.length * 1.5).toFixed(1),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /sync/cases/search — seed cases via eCourts Case Search API
 // Body: { advocates, petitioners, respondents, courtCodes, query, page }
 app.post('/sync/cases/search', async (req, res) => {
